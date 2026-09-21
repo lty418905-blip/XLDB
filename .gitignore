@@ -1,0 +1,12 @@
+.local/
+node_modules/
+*-private/
+.env
+.env.*
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.log
+*.pem
+*.key
