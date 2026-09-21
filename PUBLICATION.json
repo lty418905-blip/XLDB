@@ -3,19 +3,20 @@
   "kind": "installable-mvp-source-snapshot",
   "baseManifest": "bd32a80d2ffa354a7955c84b360b8cd2cc889b2d18da253e5775453f3a225026",
   "baseZipSha256": "9cdb599d08bb3d23682a6edfd815d2a5ee002d1b92c48d661e5aefa6a0d53139",
-  "unchangedProductFiles": 87,
+  "unchangedProductFiles": 84,
   "connectorUnchanged": true,
   "changes": [
     "Custom license and third-party notice",
     "Public README and MVP status",
     "package license metadata",
-    "Git ignore rules and publication manifest"
+    "Git ignore rules and publication manifest",
+    "Agent embedding/reranker onboarding instructions"
   ],
   "files": [
     {
       "file": ".agents/skills/xldb-agent/SKILL.md",
-      "bytes": 7607,
-      "sha256": "c8bfa7276de68a9c46dabea12992286efcad9d9b5c1babc0e45801694feb01ea"
+      "bytes": 8396,
+      "sha256": "c36992369f373b0b729a2ffc1b84f647e9bb705ce889674526b87a190c675399"
     },
     {
       "file": ".gitattributes",
@@ -34,8 +35,8 @@
     },
     {
       "file": "INSTALL_AGENT.md",
-      "bytes": 4757,
-      "sha256": "cde37c86bd850c8db30281257f5cf8701e08dfb582da15d274e8175c8a8751e1"
+      "bytes": 5315,
+      "sha256": "dc71b8127e5ac4c2ffd2e7ca72ce405c94c8af284c2bf7b38accff0be485a6b0"
     },
     {
       "file": "LICENSE.md",
@@ -84,8 +85,8 @@
     },
     {
       "file": "docs/AGENT.md",
-      "bytes": 18598,
-      "sha256": "dc43c8e650d3d12a8ef27e8ebe9b3a141563f9b79f7b33cf0f456e58b9b0e1e7"
+      "bytes": 21015,
+      "sha256": "a1adfebb62af0441f2ed2df5131b1792053d130f707a6bf17adbc1af5ab44f20"
     },
     {
       "file": "docs/ARITHMETIC.md",

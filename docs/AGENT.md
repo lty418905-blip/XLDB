@@ -92,7 +92,28 @@ SDK `setPreference(scope, characterId, id, enabled, text?)`／CLI `preference` �
 
 操作包括 `configure`（`roster`）、`sync`（完整 `messages`）、`recall`（`characterId/query`）、`turn`（`envelope/input/accept`）、`access`（`characterId/memoryId/access`）、`edit`（`messageId/text`）、`delete`（`messageId`）、`retry`（当前范围的失败来源）。`turn` 会先保存并处理用户正文；`accept:false` 只丢弃助手候选，`true` 接受最终回复。可在 userSubmission 提供稳定 userMessageId、operationId、expectedVersion、acceptedAtMs；同一用户事件重试保留这些值。后台候选、分析和日志不变成正文。`dataDirectory` 可指定工作区 `.local/` 内独立目录，默认 `.local/agent/data`。
 
-CLI 请求可增加 `retrievalConfigPath: "D:/XLDB-private/agent-retrieval.json"`。该私有 JSON 只需含 `reranker`，也可含 `embedding`，格式同 SDK；路径由用户显式指定，每次运行读取。密钥保存在该私有文件，不能写进请求、任务文件或源码。不要把完整酒馆推理配置当作 Agent 配置；CLI 只采用这两个检索字段，文本推理不变。
+CLI 请求可增加 `retrievalConfigPath: "D:/XLDB-private/agent-retrieval.json"`。该私有 JSON 可独立配置 `embedding`、`reranker` 或同时配置两项，格式同 SDK；路径由用户显式指定，每次运行读取。密钥保存在该私有文件，不能写进请求、任务文件或源码。不要把完整酒馆推理配置当作 Agent 配置；CLI 只采用这两个检索字段，文本推理不变。
+
+### 检索配置引导
+
+安装成功后，宿主 Agent 主动引导一次；已有配置或用户明确跳过时复用选择。没有已知选择的首次使用也执行此引导。
+
+1. 说明当前默认使用本地 LanceDB BM25。embedding 增加语义向量检索；reranker 对候选重新排序。两者独立，支持仅 embedding、仅 reranker、两者都用或均跳过。询问用户的选择；跳过后继续本地模式，不阻塞安装和使用。
+2. 对用户选择的服务，获取 API 地址、模型名和认证方式；推荐用户直接在本地私有文件填写密钥，或使用宿主安全凭据输入，不要求把密钥粘贴到聊天。请求可能把查询及当前允许访问的记忆文本发送到所选服务，并产生费用；先让用户明确该服务可用于这项用途，不能从机器上其他凭据推定授权。
+3. 在安装根相邻的私有目录保存 UTF-8 JSON，例如 `D:/XLDB-private/agent-retrieval.json`。下方模板全部空白即禁用；启用某项至少填写其 `baseUrl` 和 `model`，无需认证的本地服务可保留空 `key`。使用兼容 embeddings 或 rerank 协议的端点，不能用普通聊天模型地址代替。已有文件仅修改用户选择的字段，不覆盖其它有效设置。
+4. 在宿主现有偏好/配置中记录选择和绝对路径，不记录密钥。后续 CLI 请求显式加入 `retrievalConfigPath`；SDK 构造 `AgentRuntime` 时经 `options.retrieval` 传入。仅创建文件不会自动启用服务，宿主子代理不会代替 embedding/reranker API。
+5. 用户授权后，用隔离的非敏感样例和非空召回查询检查实际模式及返回结果。分别报告“已保存”“已实际调用通过”或失败/降级；空库、空查询、安装检查或接口HTTP成功不足以证明向量检索质量。发生 `bm25-fallback` / `hybrid-fallback` 时如实报告，不把降级当原模式通过。未授权调用时只报告已配置、未测试。
+
+```json
+{
+  "embedding": { "baseUrl": "", "key": "", "model": "" },
+  "reranker": { "baseUrl": "", "key": "", "model": "" }
+}
+```
+
+预期模式：均不配置为 `bm25`；仅 embedding 为 `hybrid`；仅 reranker 为 `bm25+rerank`；两者均配置为 `hybrid+rerank`。API 根路径或完整 `/embeddings`、`/rerank` 地址均可，字段及降级约束见 [检索说明](RETRIEVAL.md)。
+
+### 后台任务与取消
 
 后台任务默认有界等待；失败不改成模型成功。已接受来源的分析失败会保留原文、阻止生成，修正原因后调用 `runtime.retry(scope)` 或 CLI `operation: retry`，直接重新处理已持久化来源，无须向前台导出世界原文。结果保留 `host_timeout`、`host_closed`、`host_worker_failed`、`host_invalid_result` 等固定错误码。
 

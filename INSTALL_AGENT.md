@@ -16,6 +16,8 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$target
 
 `Agent` 模式安装并实际运行一次无模型的 CLI 小检查。上述执行策略仅用于本次安装进程，不修改系统策略。它不会启动 HTTP 服务，也不会索取或保存聊天模型 API。Agent 数据默认留在安装根的 `.local/agent/`。
 
+**安装成功后，Agent 必须主动引导一次检索配置选择：**说明本地 BM25 可直接使用，embedding 提供语义向量检索，reranker 对候选重新排序，询问用户现在配置两项、只配置其中一项，还是暂时跳过。按 [Agent 检索配置引导](docs/AGENT.md#检索配置引导) 执行；已有明确选择或有效配置时复用，不反复询问。用户跳过不影响安装成功；未配置不能声称已启用向量检索。这里配置的是检索服务，文本推理继续使用宿主独立子代理。
+
 主 ZIP 的首次 Tavern 路径是运行 `START-XLDB.cmd`。它调用 `setup.ps1 -Mode Tavern -OpenTavern`，由本机安装脚本生成一次性 `PairingCode`，启动核心后再把临时配对信息交给已加载的酒馆转接 JS。下面的显式参数形式用于宿主自动化或诊断；`PairingCode` 是 64 位十六进制临时秘密，不要写入日志或聊天记录。
 
 ```powershell
