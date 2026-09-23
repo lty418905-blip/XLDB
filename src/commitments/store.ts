@@ -116,6 +116,11 @@ export class Commitments {
     return row ? JSON.parse(row.body) as CommitmentRecord : undefined;
   }
 
+  listActiveContactRestrictions(scope:SceneScope,input:{obligorId:string;readerId:string}):CommitmentRecord[]{
+    return this.list(scope,{mode:'companion',status:'active',obligorId:input.obligorId,readerId:input.readerId})
+      .filter(record=>record.contactRestriction!==undefined);
+  }
+
   projectPersistent(
     scope: SceneScope,
     input: { characterId: string; purpose: 'decision' | 'expression' | 'director'; mode: 'roleplay' | 'companion' },
@@ -270,6 +275,7 @@ function applyOperation(
       obligors: [...operation.obligors!],
       readers: [...operation.readers!],
       term: operation.term!,
+      ...(operation.contactRestriction?{contactRestriction:operation.contactRestriction}:{}),
       createdSourceId: existing?.createdSourceId ?? operation.sourceId,
       createdSourceRevision: existing?.createdSourceRevision ?? operation.sourceRevision,
       latestSourceId: operation.sourceId,
@@ -285,6 +291,16 @@ function applyOperation(
   if (!target) return;
   assertTargetBinding(target,operation);
   if (target.status !== 'active' || target.mode !== operation.mode) throw new Error('invalid_commitment_target');
+  if(operation.action==='harden'){
+    if(target.mode!=='companion'||target.contactRestriction===undefined)return;
+    if(target.contactRestriction.level==='hard')return;
+    if(operation.evidence.length!==1||operation.evidence[0]?.actorId!=='player')throw new Error('invalid_contact_feedback');
+    target.contactRestriction={...target.contactRestriction,level:'hard'};
+    target.revision+=1;
+    target.latestSourceId=operation.sourceId;
+    target.latestSourceRevision=operation.sourceRevision;
+    return;
+  }
   // A bound act of adherence cannot consume a continuing rule. Unbound saved
   // events keep their old projection until an explicit correction is applied.
   if(operation.action==='fulfill'&&target.term.kind==='persistent'&&operation.contractVersion===2)return;

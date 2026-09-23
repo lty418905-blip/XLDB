@@ -52,6 +52,7 @@ interface SettingsRow {revision:number;body:string}
 interface PhysiologyDependencies {
   state:(scope:SceneScope)=>{version:number;roster:SceneRoster;sources:Array<SceneMessage&{status:string;processing:string;analysis?:{physiologyOperations?:PhysiologyOperation[]}|null}>};
   modeOf:(scope:SceneScope)=>'roleplay'|'companion'|undefined;
+  fullRoleplay:(scope:SceneScope)=>boolean;
   clock:(scope:SceneScope,now:number)=>{kind:'story'|'realtime';known:boolean;timeMs:number|null;timeZone:string};
   transaction:<T>(action:()=>T)=>T;
   checkpoint:(scope:SceneScope,reason:string)=>void;
@@ -83,7 +84,11 @@ export class PhysiologyStore {
 
   configuration(scope:SceneScope):{revision:number;config:PhysiologyConfiguration}{
     const row=this.db.prepare('SELECT revision,body FROM scene_physiology_settings WHERE scope=?').get(scopeKey(scope)) as SettingsRow|undefined;
-    return {revision:row?.revision??0,config:row?configurationOf(JSON.parse(row.body),this.dependencies.state(scope).roster,this.dependencies.modeOf(scope),true):structuredClone(defaultConfiguration)};
+    const roster=this.dependencies.state(scope).roster;
+    const config=row?configurationOf(JSON.parse(row.body),roster,this.dependencies.modeOf(scope),true):structuredClone(defaultConfiguration);
+    if(this.dependencies.fullRoleplay(scope))return {revision:row?.revision??0,config:{enabled:true,dailyNeeds:[...physiologyNeeds],
+      sustainedEffects:true,reproductive:true,sexualArousal:true,trackedCharacterIds:roster.characters.map(actor=>actor.id)}};
+    return {revision:row?.revision??0,config};
   }
 
   configure(scope:SceneScope,value:unknown,expectedRevision:number){

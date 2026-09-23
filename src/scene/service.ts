@@ -13,9 +13,10 @@ import type {InitializationSource} from './initialization.ts';
 import {CompanionFlow} from './companion-flow.ts';
 import {processingFingerprint} from './processing.ts';
 import type {ProcessingAddress,ProcessingProgress} from './processing.ts';
-import {suggestAddress} from '../emotion/address.ts';
-import {relationshipContext} from '../emotion/relationships.ts';
+import {sceneAddressGuidance} from './address.ts';
 import {geographyBackgroundSources,geographyBackgroundSystem,decodeGeographyBackground} from './geography-background.ts';
+import {absenceExplanationTask,validateAbsenceExplanation} from '../emotion/absence-explanation.ts';
+import {companionIdentityGuidance,companionIdentityIssue,ensureCompanionIdentityBody} from '../companion/identity-expression.ts';
 
 interface Draft {
   id:string; scope:SceneScope; version:number; modelRevision:number; expires:number;
@@ -97,11 +98,11 @@ export class SceneCore {
     const processed=await this.processPending(scope,configs);
     return {delivery,source,processing:processed,...this.syncState(scope)};
   }
-  async companionContext(scope:SceneScope,characterId:string,context:string,configs:Configurations){
+  async companionContext(scope:SceneScope,characterId:string,context:string,configs:Configurations,currentUserSourceId?:string,nowMs=Date.now()){
     const version=this.authority.state(scope).version,revision=this.modelRevision;
     return this.companion.systemContext(scope,characterId,context,configs,()=>{
       this.assertVersion(scope,version);if(revision!==this.modelRevision)throw new Error('context_changed_retry');
-    });
+    },currentUserSourceId,nowMs);
   }
   private commitmentsContext(scope:SceneScope,characterId:string){
     const mode=this.authority.interactions.modeOf(scope);
@@ -260,6 +261,11 @@ export class SceneCore {
     const supplied=sceneMessageOf(value,this.authority.state(scope).roster);
     if(supplied.replyTo&&JSON.stringify(supplied.replyTo)!==JSON.stringify(ticket.replyTo))throw new Error('invalid_scene_candidate_changed');
     const message={...supplied,replyTo:ticket.replyTo};
+    if(this.authority.interactions.modeOf(scope)==='companion'){
+      const user=this.authority.state(scope).sources.find(source=>source.id===ticket.replyTo.id&&source.role==='user'&&source.status==='accepted');
+      const current=user?.analysis?.plan?visibleText(user.analysis.plan,ticket.speakerId??ticket.envelope.targetId):user?.text??null;
+      if(companionIdentityIssue(message.text,current))throw new Error('companion_identity_expression_invalid');
+    }
     if(ticket.modelRevision!==this.modelRevision)throw new Error('context_changed_retry');
     if(ticket.accepted){
       if(!sameMessage(ticket.accepted,message))throw new Error('invalid_scene_candidate_changed');
@@ -297,22 +303,24 @@ export class SceneCore {
     const current=visibleText(source.analysis.plan,character.id);
     if(!current.trim()) throw new Error('invalid_scene_native_visibility');
     const assertCurrent=()=>this.assertVersion(scope,state.version);
+    const decisionNowMs=Date.now();
     const context=await this.core.contextFrom(this.authority.snapshot(scope,character.id,state),current,configs,
-      this.authority.responseEmotion(scope,character.id,Date.now(),state),this.authority.preferences(scope,character.id,state,source.id),assertCurrent);
-    context.context+=addressSuggestion(this.authority,scope,character.id,envelope,state);
+      this.companion.contactEmotion(scope,character.id,decisionNowMs,state,{sourceId:source.id,revision:source.revision}).emotion,
+      this.authority.preferences(scope,character.id,state,source.id),assertCurrent);
+    context.context+=sceneAddressGuidance(this.authority,scope,character.id,envelope,state,context.emotion);
     context.context+=this.authority.worldContext(scope,character.id,state);
     context.context+=this.authority.physiology.context(scope,character.id);
     context.context+=this.authority.geography.context(scope,character.id);
     context.context+=this.commitmentsContext(scope,character.id);
     context.context+=await direct(character,context.context,current);
-    context.context+=await this.companionContext(scope,character.id,context.context+'\n当前用户正文：'+current,configs);
+    context.context+=await this.companionContext(scope,character.id,context.context+'\n当前用户正文：'+current,configs,source.id,decisionNowMs);
     assertCurrent();
     const dependencies=state.sources.filter(item=>item.status==='accepted' && item.processing==='ready' && item.analysis?.characters[character.id]).map(item=>({id:item.id,revision:item.revision}));
     const relevant=source.analysis.plan.observations.filter(item=>item.readers.includes(character.id));
     const readers=envelope.presentIds.filter(id=>relevant.every(item=>item.readers.includes(id)));
     const companion=this.authority.interactions.modeOf(scope)==='companion';
     const persona=companion
-      ? `当前是伴侣模式，只扮演 ${character.name}，稳定身份 ${character.id}。${companionIdentity(envelope)}自然、直接地与用户交谈，按对话语境决定是否描述动作；不把用户称为玩家。只表达该角色可知的内容，不代写其他角色或用户的内心、台词和选择。\n${character.persona}`
+      ? `当前是伴侣模式，只扮演 ${character.name}，稳定身份 ${character.id}。${companionIdentity(envelope)}自然、直接地与用户交谈，按对话语境决定是否描述动作；不把用户称为玩家。只表达该角色可知的内容，不代写其他角色或用户的内心、台词和选择。${companionIdentityGuidance(current)}\n${character.persona}`
       : `当前只扮演 ${character.name}，稳定身份 ${character.id}。${playerIdentity(envelope)}只写该角色可知的言语与可观察行为，不代写其他NPC的台词、内心或玩家选择。简体中文小说体，以玩家为第二人称感知锚点。\n${character.persona}`;
     return {version:state.version,dependencies,retrievalModes:[context.retrieval],envelope:{...envelope,presentIds:readers},messages:[
       {role:'system',content:persona},
@@ -348,7 +356,7 @@ export class SceneCore {
       const current=visibleText(plan,actor.id);
       const context=await this.core.contextFrom(this.authority.snapshot(scope,actor.id,state),current,configs,
         batch[0]!.group,this.authority.preferences(scope,actor.id,state,source.id),assertCurrent);
-      context.context+=addressSuggestion(this.authority,scope,actor.id,source.envelope,state);
+      context.context+=sceneAddressGuidance(this.authority,scope,actor.id,source.envelope,state,context.emotion);
       context.context+=this.authority.worldContext(scope,actor.id,state);
       context.context+=this.authority.physiology.context(scope,actor.id);
       context.context+=this.authority.geography.context(scope,actor.id);
@@ -370,7 +378,7 @@ export class SceneCore {
       const current=visibleText(plan,actor.id);
       const context=await this.core.contextFrom(this.authority.snapshot(scope,actor.id,state),current,configs,
         emotion,this.authority.preferences(scope,actor.id,state,source.id),assertCurrent);
-      context.context+=addressSuggestion(this.authority,scope,actor.id,source.envelope,state);
+      context.context+=sceneAddressGuidance(this.authority,scope,actor.id,source.envelope,state,context.emotion);
       context.context+=this.authority.worldContext(scope,actor.id,state);
       context.context+=this.authority.physiology.context(scope,actor.id);
       context.context+=this.authority.geography.context(scope,actor.id);
@@ -449,20 +457,30 @@ export class SceneCore {
     const snapshot=this.authority.snapshot(scope,character.id,state);
     const direct=await this.directorFor(state,configs);
     const assertCurrent=()=>this.assertVersion(scope,state.version);
+    const decisionNowMs=Date.now();
     const context=await this.core.contextFrom(snapshot,current,configs,
-      this.authority.responseEmotion(scope,character.id,Date.now(),state),this.authority.preferences(scope,character.id,state,userMessage.id),assertCurrent);
-    context.context+=addressSuggestion(this.authority,scope,character.id,envelope,state);
+      this.companion.contactEmotion(scope,character.id,decisionNowMs,state,{sourceId:userMessage.id,revision:userMessage.revision}).emotion,
+      this.authority.preferences(scope,character.id,state,userMessage.id),assertCurrent);
+    context.context+=sceneAddressGuidance(this.authority,scope,character.id,envelope,state,context.emotion);
     context.context+=this.authority.worldContext(scope,character.id,state);
     context.context+=this.authority.physiology.context(scope,character.id);
     context.context+=this.authority.geography.context(scope,character.id);
     context.context+=this.commitmentsContext(scope,character.id);
     context.context+=await direct(character,context.context,current);
-    context.context+=await this.companionContext(scope,character.id,context.context+'\n当前用户正文：'+current,configs);
+    context.context+=await this.companionContext(scope,character.id,context.context+'\n当前用户正文：'+current,configs,userMessage.id,decisionNowMs);
     const companion=this.authority.interactions.modeOf(scope)==='companion';
     const persona=companion
-      ? `当前是伴侣模式，只扮演 ${character.name}，稳定身份 ${character.id}。${companionIdentity(envelope)}自然、直接地与用户交谈，按对话语境决定是否描述动作；不把用户称为玩家。只表达这个角色实际可知的内容，不代写其他角色或用户的内心、台词和选择。用户正文中明确已经完成的事件已经发生，不再重演；只回应此刻。\n${character.persona}`
+      ? `当前是伴侣模式，只扮演 ${character.name}，稳定身份 ${character.id}。${companionIdentity(envelope)}自然、直接地与用户交谈，按对话语境决定是否描述动作；不把用户称为玩家。只表达这个角色实际可知的内容，不代写其他角色或用户的内心、台词和选择。用户正文中明确已经完成的事件已经发生，不再重演；只回应此刻。${companionIdentityGuidance(current)}\n${character.persona}`
       : `当前只扮演 ${character.name}，稳定身份 ${character.id}。${playerIdentity(envelope)}只写这个角色实际可知的言语和行为，不替其它角色写内心或台词。用户正文中明确已经完成的购买、等待或其它事件已经发生，不再重演或再次推进时间；只回应此刻。\n${character.persona}`;
     const result=await this.core.respond(context,current,persona,configs,assertCurrent);
+    let answer=result.answer;
+    if(companion){
+      try{answer=await ensureCompanionIdentityBody(answer,current,(instruction,original)=>this.models.generate(instruction,
+        persona+'\n'+context.context,JSON.stringify({currentUserText:current,original}),configs.front));}
+      catch(error){if(error instanceof Error&&error.message==='companion_identity_expression_invalid')return {status:'failed',phase:'generation-output',version:state.version,error:error.message,
+        userMessage,progress:this.progress(scope)};throw error;}
+      assertCurrent();
+    }
     const relevant=userPlan.observations.filter(observation=>observation.readers.includes(character.id));
     // A private input never becomes public merely because more NPCs share the chat.
     const replyReaders=[...new Set([character.id,...relevant[0]!.readers.filter(reader=>relevant.every(observation=>observation.readers.includes(reader)))])];
@@ -470,7 +488,7 @@ export class SceneCore {
     const dependencies=state.sources.filter(source=>source.status==='accepted' && source.processing==='ready' && source.analysis?.characters[character.id])
       .map(source=>({id:source.id,revision:source.revision}));
     const id=randomUUID();
-    const assistantMessage:SceneMessage={id:`scene-${id}:assistant`,revision:1,role:'assistant',text:result.answer,
+    const assistantMessage:SceneMessage={id:`scene-${id}:assistant`,revision:1,role:'assistant',text:answer,
       acceptedAtMs:userMessage.acceptedAtMs,envelope:{...envelope,presentIds:replyReaders},speakerId:character.id,dependencies,
       replyTo:{id:userMessage.id,revision:userMessage.revision}};
     const assistantPlan=await this.plan(assistantMessage,state.roster,configs);
@@ -480,7 +498,7 @@ export class SceneCore {
     if(modelRevision!==this.modelRevision)throw new Error('context_changed_retry');
     const draft:Draft={id,scope,version:state.version,modelRevision,expires:Date.now()+30*60*1000,userMessage,assistantMessage,assistantPlan,accepted:false,complete:false};
     this.drafts.set(id,draft);
-    return {status:'ready',draftId:id,answer:result.answer,version:state.version,userMessage,assistantMessage,observations:userPlan.observations,unresolved:[]};
+    return {status:'ready',draftId:id,answer,version:state.version,userMessage,assistantMessage,observations:userPlan.observations,unresolved:[]};
   }
 
   /** Regenerate the last accepted reply against the state before that reply, without mutating it. */
@@ -494,7 +512,9 @@ export class SceneCore {
     const packet=await this.nativeContext(scope,user.envelope,user.id,configs,previous.id);
     const input=packet.messages.filter(message=>message.role==='user').map(message=>message.content).join('\n');
     const context=packet.messages.filter(message=>message.role==='system').map(message=>message.content).join('\n');
-    const answer=await this.models.generate('重新生成当前回复。只回应用户已经发生的最后一条正文；不重演已经完成的交易或重复推进时间。',context,input,configs.front);
+    let answer=await this.models.generate('重新生成当前回复。只回应用户已经发生的最后一条正文；不重演已经完成的交易或重复推进时间。',context,input,configs.front);
+    if(this.authority.interactions.modeOf(scope)==='companion')answer=await ensureCompanionIdentityBody(answer,input,
+      (instruction,original)=>this.models.generate(instruction,context,JSON.stringify({currentUserText:input,original}),configs.front));
     this.assertVersion(scope,state.version);
     const assistantMessage=sceneMessageOf({...previous,text:answer,revision:previous.revision+1,dependencies:packet.dependencies,
       replyTo:previous.replyTo??{id:user.id,revision:user.revision}},state.roster);
@@ -545,11 +565,12 @@ export class SceneCore {
   private async directorFor(state:import('./types.ts').SceneState,configs:Configurations){
     if(this.authority.interactions.modeOf(state.scope)!=='roleplay')
       return async(_actor:import('./types.ts').SceneCharacter,_context:string,_current:string)=>'';
-    const control=this.authority.interactions.get(state.scope,'sillytavern');
+    const control=this.authority.interactions.roleplay(state.scope);
     this.authority.interactions.assertActive(state.scope,control.revision);
     if(!control.directorEnabled)
       return async(_actor:import('./types.ts').SceneCharacter,_context:string,_current:string)=>'';
-    if(!configs.director?.baseUrl||!configs.director.model)throw new Error('director_model_not_configured');
+    if(!configs.director?.model||(control.host==='sillytavern'&&!configs.director.baseUrl))
+      throw new Error('director_model_not_configured');
     const revision=this.modelRevision;
     const assertCurrent=()=>{
       this.assertVersion(state.scope,state.version);
@@ -598,10 +619,31 @@ export class SceneCore {
           this.assertVersion(scope,state.version);
           const characters:Record<string,Analysis>={};
           const subject=this.authority.subject(scope);
-          const userModelCandidates=subject&&source.role==='user'?await this.stage(scope,source,'profile',undefined,
+          const userModelCandidates=subject?.host==='agent'&&this.authority.interactions.modeOf(scope)==='companion'&&source.role==='user'?await this.stage(scope,source,'profile',undefined,
             {source:this.modelSource(source),controls:this.authority.userModel.controls(subject.subjectId),config:configs.profile},
             ()=>this.companion.extract(scope,source,configs,()=>this.assertVersion(scope,state.version))):undefined;
           const interactionMode=this.authority.interactions.modeOf(scope);
+          const agentCompanion=interactionMode==='companion'&&subject?.host==='agent';
+          const contactResponseExpectation=agentCompanion&&source.role==='assistant'&&source.envelope.mode==='direct'
+            ?await this.stage(scope,source,'contactResponseExpectation',undefined,
+              {schema:1,source:this.modelSource(source)},async()=>{
+                if(!this.companion.responseExpectationExtractor)throw new Error('contact_response_expectation_provider_required');
+                const raw=await this.companion.responseExpectationExtractor([
+                  {role:'system',content:'判断已接受角色正文是否明确期待用户接着回复。不要以沉默推断心情。返回 JSON {"schema":"xldb-contact-reply-expectation-v1","expected":true|false|null,"quote":"支持判断的正文逐字短句，未知时为null"}。明确提问或请求答复为true；明确告别/不用回复为false；其余不确定为null。'},
+                  {role:'user',content:JSON.stringify({id:source.id,text:source.text})},
+                ]);
+                return decodeContactResponseExpectation(raw,source.text);
+              }):undefined;
+          const absenceExplanation=agentCompanion&&source.role==='user'&&source.envelope.mode==='direct'
+            ?await this.stage(scope,source,'absenceExplanation',undefined,
+              {schema:2,source:this.modelSource(source),timeZone:source.acceptedTimeZone??null},async()=>{
+                if(!this.companion.absenceExplanationExtractor)throw new Error('absence_explanation_provider_required');
+                const timeZone=source.acceptedTimeZone??'';
+                const task=absenceExplanationTask(source,timeZone);
+                const raw=await this.companion.absenceExplanationExtractor([
+                  {...task.messages[0],content:task.messages[0].content+'\nJSON schema: '+JSON.stringify(task.schema)},task.messages[1]]);
+                return validateAbsenceExplanation(source,JSON.parse(raw),{characterId:source.envelope.targetId,timeZone});
+              }):undefined;
           const settings=this.authority.worldSettings(scope);
           const worldHistory=processed;
           const purchaseRefs=worldPurchaseReferences(worldHistory);
@@ -610,7 +652,7 @@ export class SceneCore {
             ()=>this.models.worldEffects(source,settings,configs.world,worldHistory)):undefined;
           const clockTimeMs=interactionMode==='companion'?source.acceptedAtMs:settings?.mode==='story'
             ?this.authority.emotionTime(scope,[...processed,{...source,processing:'ready',analysis:{plan,characters,worldEffects}}],source.acceptedAtMs):undefined;
-          const timeZone=interactionMode?this.authority.interactions.clock(scope).timeZone:undefined;
+          const timeZone=interactionMode?source.acceptedTimeZone:undefined;
           const physiologyConfiguration=this.authority.physiology.configuration(scope);
           const physiologyAtMs=clockTimeMs??(interactionMode==='roleplay'?null
             :this.authority.emotionTime(scope,[...processed,{...source,processing:'ready',analysis:{plan,characters,...(worldEffects?{worldEffects}:{})}}],source.acceptedAtMs));
@@ -630,13 +672,30 @@ export class SceneCore {
           const responseTo=source.replyTo??(source.role==='assistant'&&preceding?.role==='user'
             ?{id:preceding.id,revision:preceding.revision}:undefined);
           const antecedent=responseTo?processed.find(item=>item.id===responseTo.id&&item.revision===responseTo.revision):undefined;
-          const responseContext=antecedent?{id:antecedent.id,revision:antecedent.revision,role:antecedent.role,text:antecedent.text}:undefined;
+          const feedbackDeliveryId=source.role==='user'&&source.envelope.mode==='direct'&&preceding?.role==='assistant'&&
+            preceding.speakerId===source.envelope.targetId&&preceding.envelope.mode==='direct'&&
+            preceding.id.startsWith('proactive:')&&preceding.acceptedAtMs<=source.acceptedAtMs
+            ?preceding.id.slice('proactive:'.length):null;
+          const feedbackDelivery=feedbackDeliveryId?this.authority.companion.getDelivery(feedbackDeliveryId):null;
+          const feedbackBindings=feedbackDelivery?.status==='host_committed'&&feedbackDelivery.targetId===this.authority.companionTarget(scope,source.envelope.targetId)
+            ?this.authority.companion.getDeliveryExceptionBindings(feedbackDeliveryId!):[];
+          const currentCommitments=interactionMode?foldCommitments(scope,processed).filter(record=>record.mode===interactionMode):[];
+          const feedbackRecords=feedbackBindings.flatMap(binding=>{
+            const record=currentCommitments.find(item=>item.id===binding.commitmentId&&item.revision===binding.revision&&
+              item.latestSourceId===binding.sourceId&&item.latestSourceRevision===binding.sourceRevision&&item.status==='active');
+            return record?[record]:[];
+          });
+          const contactFeedbackTargets=feedbackRecords.map(record=>({id:record.id,revision:record.revision,
+            sourceId:record.latestSourceId,sourceRevision:record.latestSourceRevision}));
+          const responseSource=antecedent??(contactFeedbackTargets.length?preceding:undefined);
+          const responseContext=responseSource?{id:responseSource.id,revision:responseSource.revision,role:responseSource.role,text:responseSource.text}:undefined;
           const existingCommitments=interactionMode
-            ?commitmentTransitionTargets(foldCommitments(scope,processed).filter(record=>record.mode===interactionMode),responseTo):[];
+            ?commitmentTransitionTargets(contactFeedbackTargets.length?feedbackRecords:currentCommitments,responseTo):[];
           const commitmentOperations=interactionMode?await this.stage(scope,source,'commitment',undefined,
-            {schema:5,source:this.modelSource(source),plan,mode:interactionMode,clockTimeMs,timeZone,responseTo:responseTo??null,responseContext,existing:existingCommitments,config:configs.commitment},async()=>{
+            {schema:6,source:this.modelSource(source),plan,mode:interactionMode,clockTimeMs,timeZone,responseTo:responseTo??null,responseContext,
+              contactFeedbackTargets,existing:existingCommitments,config:configs.commitment},async()=>{
               const validation={source,plan,actorIds:['player',...state.roster.characters.map(character=>character.id)],userActorId:'player',mode:interactionMode,
-                clockTimeMs,timeZone,contractVersion:2 as const,responseTo,responseContext,existing:existingCommitments};
+                clockTimeMs,timeZone,contractVersion:2 as const,responseTo,responseContext,contactFeedbackTargets,existing:existingCommitments};
               const prompt=extractCommitmentPrompt(validation);
               const raw=await this.models.structuredTask(configs.commitment,[{role:'system',content:prompt.system+'\nJSON schema: '+JSON.stringify(prompt.schema)},
                 {role:'user',content:JSON.stringify(prompt.input)}]);
@@ -648,7 +707,9 @@ export class SceneCore {
               return operations;
             }):undefined;
           this.assertVersion(scope,state.version);
-           processed.push({...source,processing:'ready',analysis:{plan,characters,...(worldEffects?{worldEffects}:{}),...(commitmentOperations?{commitmentOperations}:{}),
+           processed.push({...source,processing:'ready',analysis:{plan,characters,...(contactResponseExpectation?{contactResponseExpectation}:{}),
+             ...(absenceExplanation?{absenceExplanation}:{}),
+             ...(worldEffects?{worldEffects}:{}),...(commitmentOperations?{commitmentOperations}:{}),
              ...(userModelCandidates?{userModelCandidates}:{}),...(physiologyOperations?{physiologyOperations}:{}),...(geographyOperations?{geographyOperations}:{})}});
           const eventTime=this.authority.emotionTime(scope,processed,source.acceptedAtMs);
           // No character model is ever given the world source or another profile.
@@ -657,6 +718,9 @@ export class SceneCore {
             if (!visible) return;
             const scoped={id:source.id,revision:source.revision,role:source.role,text:visible,acceptedAtMs:source.acceptedAtMs};
             const profile={id:character.id,name:character.name,persona:character.persona,experienceState};
+            const contactAffect=agentCompanion&&source.role==='user'
+              ?this.companion.contactEmotion(scope,character.id,source.acceptedAtMs,{...state,sources:processed},
+                {sourceId:source.id,revision:source.revision}).affect:null;
             const excerpts=plan.observations.filter(observation=>observation.readers.includes(character.id)).map(observation=>observation.quote);
             if(typeof this.models.analyzeMemory!=='function'||typeof this.models.analyzeEmotion!=='function'||typeof this.models.analyzePreference!=='function'){
               const analysis=await this.models.analyze(scoped,configs,profile,excerpts);
@@ -669,8 +733,8 @@ export class SceneCore {
             const sceneEmotion=(this.models as {sceneEmotion?:ModelTasks['sceneEmotion']}).sceneEmotion;
             const [memories,emotionResult,preferences]=await settled([
               this.stage(scope,source,'memory',character.id,{...common,config:configs.memory},()=>this.models.analyzeMemory(scoped,configs.memory,profile,excerpts)),
-              this.stage(scope,source,'emotion',character.id,{...common,schema:2,relationshipScene,config:configs.emotion},()=>sceneEmotion
-                ? sceneEmotion.call(this.models,scoped,relationshipScene,configs.emotion)
+              this.stage(scope,source,'emotion',character.id,{...common,schema:3,relationshipScene,contactAffect,config:configs.emotion},()=>sceneEmotion
+                ? sceneEmotion.call(this.models,scoped,{...relationshipScene,contactAffect},configs.emotion)
                 : this.models.analyzeEmotion(scoped,configs.emotion,profile).then(emotion=>({emotion,relationships:[]}))),
               this.stage(scope,source,'preference',character.id,{...common,schema:2,config:configs.preference},()=>this.models.analyzePreference(scoped,configs.preference)),
             ] as const);
@@ -688,7 +752,9 @@ export class SceneCore {
             onInvalidated:()=>this.invalidateModelConfiguration(),
           });
           this.assertVersion(scope,state.version);
-           results.push({id:source.id,revision:source.revision,analysis:{plan,characters,...(worldEffects?{worldEffects}:{}),...(commitmentOperations?{commitmentOperations}:{}),
+           results.push({id:source.id,revision:source.revision,analysis:{plan,characters,...(contactResponseExpectation?{contactResponseExpectation}:{}),
+             ...(absenceExplanation?{absenceExplanation}:{}),
+             ...(worldEffects?{worldEffects}:{}),...(commitmentOperations?{commitmentOperations}:{}),
              ...(userModelCandidates?{userModelCandidates}:{}),...(physiologyOperations?{physiologyOperations}:{}),...(geographyOperations?{geographyOperations}:{})}});
         }
         return {status:'ready',version:this.authority.commit(scope,state.version,results)};
@@ -726,6 +792,7 @@ export class SceneCore {
 
   private modelSource(source:SceneMessage) {
     return {id:source.id,revision:source.revision,role:source.role,text:source.text,acceptedAtMs:source.acceptedAtMs,
+      acceptedTimeZone:source.acceptedTimeZone??null,
       envelope:source.envelope,automatic:source.automatic??false,speakerId:source.speakerId??null,dependencies:source.dependencies??[]};
   }
 
@@ -816,23 +883,20 @@ function sameMessage(left:SceneMessage,right:SceneMessage) {
     left.speakerId===right.speakerId && JSON.stringify(left.envelope)===JSON.stringify(right.envelope) && JSON.stringify(left.dependencies??[])===JSON.stringify(right.dependencies??[]) && JSON.stringify(left.replyTo)===JSON.stringify(right.replyTo);
 }
 
+function decodeContactResponseExpectation(raw:string,body:string):{expected:boolean|null;quote:string|null} {
+  let value:unknown;try{value=JSON.parse(raw);}catch{throw new Error('invalid_contact_response_expectation');}
+  if(!value||typeof value!=='object')throw new Error('invalid_contact_response_expectation');
+  const row=value as Record<string,unknown>;
+  if(row.schema!=='xldb-contact-reply-expectation-v1'||row.expected!==null&&typeof row.expected!=='boolean'||
+    (row.expected===null?row.quote!==null:typeof row.quote!=='string'||!row.quote.trim()||row.quote.length>200||!body.includes(row.quote)))
+    throw new Error('invalid_contact_response_expectation');
+  return {expected:row.expected as boolean|null,quote:row.quote as string|null};
+}
+
 function playerIdentity(envelope:SceneEnvelope) {
   return `玩家姓名：${JSON.stringify(envelope.playerName??'未提供')}。玩家与NPC是不同身份，即使同名也不能混同。当前用户正文里的“我”指玩家；角色对玩家说话时“你”也指玩家，不能改称另一名NPC。\n`;
 }
 
 function companionIdentity(envelope:SceneEnvelope) {
   return `用户姓名：${JSON.stringify(envelope.playerName??'未提供')}。用户与角色是不同身份，即使同名也不能混同。当前用户正文里的“我”指用户；角色对用户说话时“你”也指用户，不能改称另一名角色。回应当前话题；未来约定没有到期依据时不要当成眼前行动。根据当前情境和用户明确要求自然交流，可以正常追问。\n`;
-}
-
-/** Directional source anchors, not aggregate OpenHer scores, govern the relationship and address guidance. */
-function addressSuggestion(authority:SceneAuthority,scope:SceneScope,speakerId:string,envelope:SceneEnvelope,state:SceneState):string {
-  const presentCount=envelope.presentIds.length+1;
-  const relation=authority.relationshipAnchor(scope,speakerId,'player',state);
-  const suggestion=suggestAddress({
-    visibility:presentCount>2?'public':'private',presentCount,formality:'casual',
-    addresseeIdentityKnown:typeof envelope.playerName==='string'&&!!envelope.playerName.trim(),
-  },relation===undefined?undefined:{sourceId:relation.sourceId,revision:relation.revision,status:'accepted',
-    direction:'speaker-to-addressee',relations:relation.relations});
-  const relationship=relationshipContext(authority.relationships(scope,speakerId,state));
-  return relationship+`\n[XLDB 称谓建议] 当前上下文中已列明的显式称谓、拒绝和边界偏好优先于本建议。${suggestion.instruction}`;
 }

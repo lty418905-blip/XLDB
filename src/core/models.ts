@@ -27,6 +27,7 @@ export interface SceneEmotionInput {
   actors: readonly RelationshipActor[];
   plan: PerspectivePlan;
   character?: {id:string;name:string;persona:string;experienceState?:EmotionState};
+  contactAffect?:import('../emotion/contact-affect.ts').ContactAffect|null;
 }
 export interface SceneEmotionResult { emotion: EmotionDelta; relationships: DirectionalRelationship[] }
 
@@ -255,9 +256,9 @@ add/subtract/multiply/divide恰好2个操作数。subtract与divide顺序有意�
     const targets=[{id:scene.userActorId,kind:'player'},...scene.actors.filter(actor=>actor.id!==scene.subjectId)
       .map(actor=>({id:actor.id,name:actor.name,aliases:actor.aliases}))];
     const text=observations.map(observation=>observation.quote).join('\n');
-    const result=parseJson(await this.run(config,[{role:'system',content:sceneEmotionPrompt},
+    const result=parseJson(await this.run(config,[{role:'system',content:sceneEmotionPrompt+'\n若 contactAffect 为已接受来源重建的等待/返场经历，只把它作为本轮角色可能的主观经历；解释与用户当前正文优先，不能猜测用户动机，不能仅因沉默降低稳定信任。'},
       {role:'user',content:JSON.stringify({character:scene.character?promptCharacter(scene.character):undefined,role:message.role,text,
-        subjectId:scene.subjectId,userActorId:scene.userActorId,targets,observations:observations.map(observation=>({id:observation.id,
+        contactAffect:scene.contactAffect??null,subjectId:scene.subjectId,userActorId:scene.userActorId,targets,observations:observations.map(observation=>({id:observation.id,
           quote:observation.quote,evidence:observation.evidence,actorId:observation.actorId??null,recipients:observation.recipients??[],
           playerVisible:observation.playerVisible===true,playerEvidence:observation.playerEvidence??null}))})}],true));
     const emotionInput=result.emotion===undefined ? result : result.emotion;

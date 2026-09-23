@@ -1,8 +1,9 @@
 import type {
   CommitmentCandidate, CommitmentCandidateTerm, CommitmentPrompt, CommitmentRecord, CommitmentTargetCandidate,
-  CommitmentTerm, CommitmentValidationInput, ValidatedCommitmentOperation,
+  CommitmentTerm, CommitmentValidationInput, ValidatedCommitmentOperation, ContactRestrictionCandidate, ContactRestriction,
 } from './types.ts';
 import {resolveCommitmentTime} from './time.ts';
+import {resolveContactRestriction} from './contact.ts';
 
 const MAX_ID = 200;
 const MAX_TEXT = 8_000;
@@ -28,6 +29,7 @@ export function extractCommitmentPrompt(input: CommitmentValidationInput): Commi
       'A request telling someone what to do is only a proposal unless that obligor explicitly agrees; do not invent their consent. Unknown duration still requires term:{"kind":"unknown"}.',
       'Readers must be limited to principals who can know the cited observation. Return {"operations":[]} only when no grounded operations exist.',
       'existing contains every currently actionable target in a compact host-authored form. A unique adjacent proposal may be confirmed from the current quote. Otherwise include targetExcerpt only when one exact distinguishing span occurs verbatim in both the current quote and that target content, and no other actionable target for the operation contains it. targetExcerpt identifies the referenced object; it does not prove consent. If the current source uses only a generic or relative reference that cannot uniquely identify an older target, omit the operation. Each target operation still needs its own current-source quote and evidence. Never reuse one generic quote/evidence to transform several targets. A persistent target cannot be fulfilled by one compliant act; omit that operation.',
+      'Companion-only contactRestriction may mark an explicit no-contact interval or daily local quiet hours in a propose/establish/revise operation. Copy startQuote and endQuote exactly from the current quote; never calculate timestamps or local minutes. The host resolves them. New restrictions start soft. For a direct user negative reaction to an actual quiet-hour exception, emit harden with the exact negative feedback quote and a bound active target; this makes the remaining restriction strict without new NPC consent. Do not harden from roleplay, an assistant message, generic unhappiness, or a guessed target.',
     ].join(' '),
     input: {
       sourceId: input.source.id,
@@ -42,6 +44,7 @@ export function extractCommitmentPrompt(input: CommitmentValidationInput): Commi
       ...(input.clockTimeMs===undefined?{}:{clockTimeMs:input.clockTimeMs}),
       ...(input.timeZone===undefined?{}:{timeZone:input.timeZone}),
       ...(input.responseTo===undefined?{}:{responseTo:input.responseTo}),
+      ...(input.contactFeedbackTargets===undefined?{}:{contactFeedbackTargets:input.contactFeedbackTargets}),
       ...(input.responseContext===undefined?{}:{responseContext:input.responseContext}),
       ...(input.existing===undefined?{}:{existing:input.existing}),
     },
@@ -92,10 +95,12 @@ export function commitmentTransitionTargets(
     const consent=new Set(record.consentActorIds??[]);
     const allowedActions:CommitmentTargetCandidate['allowedActions']=record.status==='proposed'
       ?['confirm']
-      :['revise',...(record.term.kind==='persistent'?[]:['fulfill'] as const),'cancel'];
+      :['revise',...(record.term.kind==='persistent'?[]:['fulfill'] as const),'cancel',
+        ...(record.mode==='companion'&&record.contactRestriction?.level==='soft'?['harden'] as const:[])];
     return [{
       id:record.id,revision:record.revision,status:record.status,agreement:record.agreement,content:record.content,
       participants:[...record.participants],obligors:[...record.obligors],term:record.term,
+      ...(record.contactRestriction?{contactRestriction:record.contactRestriction}:{}),
       targetSourceId:record.createdSourceId,targetSourceRevision:record.createdSourceRevision,
       latestSourceId:record.latestSourceId,latestSourceRevision:record.latestSourceRevision,
       requiredConsentActorIds:required,missingConsentActorIds:required.filter(actor=>!consent.has(actor)),
@@ -114,9 +119,9 @@ function candidateOf(value: unknown): CommitmentCandidate {
   const object = keyedObject(value,
     ['operationId', 'action', 'quote', 'evidence'],
     ['commitmentId', 'targetId', 'targetRevision', 'targetSourceId', 'targetSourceRevision', 'targetExcerpt', 'contractVersion',
-      'content', 'participants', 'obligors', 'readers', 'agreement', 'term'],
+      'content', 'participants', 'obligors', 'readers', 'agreement', 'term','contactRestriction'],
     'invalid_commitment_operation');
-  const action = oneOf(object.action, ['propose', 'confirm', 'establish', 'revise', 'fulfill', 'cancel'] as const, 'invalid_commitment_action');
+  const action = oneOf(object.action, ['propose', 'confirm', 'establish', 'revise', 'fulfill', 'cancel','harden'] as const, 'invalid_commitment_action');
   if(action==='confirm' && ['commitmentId','content','participants','obligors','readers','agreement','term'].some(key=>object[key]!==undefined))
     throw new Error('invalid_commitment_confirmation');
   const base: CommitmentCandidate = {
@@ -138,6 +143,7 @@ function candidateOf(value: unknown): CommitmentCandidate {
   if (object.readers !== undefined) base.readers = identifiers(object.readers, 'invalid_commitment_readers');
   if (object.agreement !== undefined) base.agreement = oneOf(object.agreement, ['unilateral', 'mutual'] as const, 'invalid_commitment_agreement');
   if (object.term !== undefined) base.term = termOf(object.term);
+  if(object.contactRestriction!==undefined)base.contactRestriction=contactRestrictionOf(object.contactRestriction);
 
   const creates = action === 'propose' || action === 'establish' || action === 'revise';
   if (creates) {
@@ -145,11 +151,14 @@ function candidateOf(value: unknown): CommitmentCandidate {
       !base.readers?.length || !base.agreement || !base.term) throw new Error('invalid_commitment_definition');
     if (action === 'revise' && !base.targetId) throw new Error('invalid_commitment_target');
   } else if (!base.targetId) throw new Error('invalid_commitment_target');
+  if(!creates&&base.contactRestriction!==undefined)throw new Error('invalid_contact_restriction');
+  if(action==='harden'&&['commitmentId','content','participants','obligors','readers','agreement','term'].some(key=>object[key]!==undefined))
+    throw new Error('invalid_contact_feedback');
   if(base.targetExcerpt&&!base.targetId)throw new Error('invalid_commitment_target_binding');
   return base;
 }
 
-type GroundedCandidate=Omit<CommitmentCandidate,'term'>&{term?:CommitmentTerm};
+type GroundedCandidate=Omit<CommitmentCandidate,'term'|'contactRestriction'>&{term?:CommitmentTerm;contactRestriction?:ContactRestriction};
 function groundCandidate(input: CommitmentValidationInput, actors: Set<string>, candidate: CommitmentCandidate): GroundedCandidate {
   if (!input.source.text.includes(candidate.quote)) throw new Error('invalid_commitment_quote');
   if (candidate.content !== undefined && !input.source.text.includes(candidate.content)) throw new Error('invalid_commitment_content');
@@ -162,6 +171,7 @@ function groundCandidate(input: CommitmentValidationInput, actors: Set<string>, 
     ((input.mode === 'companion' && candidate.term.clock !== 'real') ||
       (input.mode === 'roleplay' && candidate.term.clock !== 'story')))
     throw new Error('invalid_commitment_clock');
+  if(candidate.contactRestriction&&input.mode!=='companion')throw new Error('invalid_contact_mode');
 
   const relevant = input.plan.observations.filter(observation =>
     input.source.text.includes(observation.quote) &&
@@ -190,13 +200,27 @@ function groundCandidate(input: CommitmentValidationInput, actors: Set<string>, 
   if ((candidate.action === 'establish' || candidate.action === 'revise') &&
     requiredConsent(candidate.agreement!, candidate.participants!, candidate.obligors!).some(actor => !evidenceActors.has(actor)))
     throw new Error('invalid_commitment_consent');
-  if(candidate.term?.kind!=='deadline')return candidate as GroundedCandidate;
+  if(candidate.action==='harden'){
+    if(input.mode!=='companion'||input.source.role!=='user'||input.userActorId===undefined||
+      candidate.evidence.length!==1||candidate.evidence[0]?.actorId!==input.userActorId||
+      !negativeContactFeedback(candidate.evidence[0].quote))
+      throw new Error('invalid_contact_feedback');
+  }
+  let contactRestriction:GroundedCandidate['contactRestriction'];
+  if(candidate.contactRestriction){
+    if(candidate.contactRestriction.level==='hard'||!candidate.quote.includes(candidate.contactRestriction.startQuote)||
+      !candidate.quote.includes(candidate.contactRestriction.endQuote))throw new Error('invalid_contact_restriction');
+    contactRestriction=resolveContactRestriction(candidate.contactRestriction,input)??undefined;
+    if(!contactRestriction)throw new Error('invalid_contact_time');
+  }
+  const {contactRestriction:_candidateRestriction,...baseCandidate}=candidate;
+  if(candidate.term?.kind!=='deadline')return {...baseCandidate,...(contactRestriction?{contactRestriction}:{})} as GroundedCandidate;
   if(!candidate.quote.includes(candidate.term.deadlineQuote)||!input.source.text.includes(candidate.term.deadlineQuote))
     throw new Error('invalid_commitment_deadline_quote');
   if(candidate.term.reminderQuote!==undefined&&(!candidate.quote.includes(candidate.term.reminderQuote)||!input.source.text.includes(candidate.term.reminderQuote)))
     throw new Error('invalid_commitment_reminder_quote');
   const dueAtMs=resolveCommitmentTime(candidate.term.deadlineQuote,{clockTimeMs:input.clockTimeMs,timeZone:input.timeZone});
-  if(dueAtMs===null)return {...candidate,term:{kind:'unknown'}};
+  if(dueAtMs===null)return {...baseCandidate,...(contactRestriction?{contactRestriction}:{}),term:{kind:'unknown'}};
   if(candidate.term.dueAtMs!==undefined&&candidate.term.dueAtMs!==dueAtMs)throw new Error('invalid_commitment_deadline');
   let remindAtMs:number|undefined;
   if(candidate.term.reminderQuote!==undefined){
@@ -205,9 +229,14 @@ function groundCandidate(input: CommitmentValidationInput, actors: Set<string>, 
   }
   if(candidate.term.remindAtMs!==undefined&&candidate.term.remindAtMs!==remindAtMs)throw new Error('invalid_commitment_reminder');
   if(remindAtMs!==undefined&&remindAtMs>dueAtMs)throw new Error('invalid_commitment_reminder');
-  return {...candidate,term:{kind:'deadline',clock:candidate.term.clock,deadlineQuote:candidate.term.deadlineQuote,
+  return {...baseCandidate,...(contactRestriction?{contactRestriction}:{}),term:{kind:'deadline',clock:candidate.term.clock,deadlineQuote:candidate.term.deadlineQuote,
     ...(candidate.term.reminderQuote===undefined?{}:{reminderQuote:candidate.term.reminderQuote}),dueAtMs,
     ...(remindAtMs===undefined?{}:{remindAtMs})}};
+}
+
+function negativeContactFeedback(quote:string):boolean {
+  if(/假如|假设|比如|举例|如果|引用|引述|(?:他|她|别人|朋友|同事).{0,10}(?:说|觉得|表示)/.test(quote))return false;
+  return /(?:别再?|不要|不许|停止).{0,16}(?:发|联系|消息|打扰|破例)|(?:发|联系|消息|打扰|破例).{0,24}(?:不喜欢|不舒服|难受|烦|生气|打扰|违背|违反|别|不要)|(?:不喜欢|不舒服|难受|烦|生气).{0,24}(?:发|联系|消息|打扰|破例)|\b(?:stop|bother|upset|not okay)\b/i.test(quote);
 }
 
 function groundedEvidenceActor(
@@ -240,6 +269,12 @@ function bindTarget(input:CommitmentValidationInput,candidate:GroundedCandidate)
   const persistentNoop=target.status==='active'&&target.term.kind==='persistent'&&candidate.action==='fulfill';
   if(!persistentNoop&&!target.allowedActions.includes(candidate.action as CommitmentTargetCandidate['allowedActions'][number]))
     throw new Error('invalid_commitment_target');
+  if(candidate.action==='harden'){
+    if(target.status!=='active'||target.contactRestriction?.level!=='soft')throw new Error('invalid_contact_target');
+    const hostBound=input.contactFeedbackTargets?.some(item=>item.id===target.id&&item.revision===target.revision&&
+      item.sourceId===target.latestSourceId&&item.sourceRevision===target.latestSourceRevision);
+    if(hostBound)return target;
+  }
   const canTake=(item:CommitmentTargetCandidate)=>item.allowedActions.includes(candidate.action as CommitmentTargetCandidate['allowedActions'][number])||
     (item.status==='active'&&item.term.kind==='persistent'&&candidate.action==='fulfill');
   const adjacentForAction=input.existing.filter(item=>item.adjacent&&canTake(item));
@@ -257,7 +292,7 @@ function assertDistinctTargetClaims(operations:readonly ValidatedCommitmentOpera
   const quotes=new Map<string,string>();
   const evidence=new Map<string,string>();
   for(const operation of operations){
-    if(!operation.targetId||operation.contractVersion!==2)continue;
+    if(!operation.targetId||operation.contractVersion!==2||operation.action==='harden')continue;
     const priorQuote=quotes.get(operation.quote);
     if(priorQuote&&priorQuote!==operation.targetId)throw new Error('invalid_commitment_target_binding');
     quotes.set(operation.quote,operation.targetId);
@@ -299,10 +334,30 @@ function termOf(value: unknown): CommitmentCandidateTerm {
     ...(remindAtMs===undefined?{}:{remindAtMs})};
 }
 
+function contactRestrictionOf(value:unknown):ContactRestrictionCandidate {
+  const object=record(value,'invalid_contact_restriction');
+  const kind=oneOf(object.kind,['interval','daily'] as const,'invalid_contact_restriction');
+  exactKeys(object,['kind','startQuote','endQuote'],'invalid_contact_restriction',
+    kind==='interval'?['startAtMs','endAtMs','level']:['timeZone','startMinute','endMinute','level']);
+  const startQuote=boundedTimeQuote(object.startQuote,'invalid_contact_restriction');
+  const endQuote=boundedTimeQuote(object.endQuote,'invalid_contact_restriction');
+  const level=object.level===undefined?undefined:oneOf(object.level,['soft','hard'] as const,'invalid_contact_restriction');
+  if(kind==='interval')return {kind,startQuote,endQuote,
+    ...(object.startAtMs===undefined?{}:{startAtMs:timestamp(object.startAtMs,'invalid_contact_time')}),
+    ...(object.endAtMs===undefined?{}:{endAtMs:timestamp(object.endAtMs,'invalid_contact_time')}),
+    ...(level===undefined?{}:{level})};
+  const minute=(value:unknown)=>{if(!Number.isSafeInteger(value)||(value as number)<0||(value as number)>=1440)throw new Error('invalid_contact_time');return value as number;};
+  return {kind,startQuote,endQuote,
+    ...(object.timeZone===undefined?{}:{timeZone:boundedTimeQuote(object.timeZone,'invalid_contact_time_zone')}),
+    ...(object.startMinute===undefined?{}:{startMinute:minute(object.startMinute)}),
+    ...(object.endMinute===undefined?{}:{endMinute:minute(object.endMinute)}),
+    ...(level===undefined?{}:{level})};
+}
+
 const commitmentSchema: Record<string, unknown> = {
   type: 'object', additionalProperties: false, required: ['operations'], properties: {
     operations: {type: 'array', maxItems: MAX_OPERATIONS, items: commitmentOperationSchema({
-        operationId: {type: 'string'}, action: {enum: ['propose', 'confirm', 'establish', 'revise', 'fulfill', 'cancel']},
+        operationId: {type: 'string'}, action: {enum: ['propose', 'confirm', 'establish', 'revise', 'fulfill', 'cancel','harden']},
         commitmentId: {type: 'string'}, targetId: {type: 'string'}, quote: {type: 'string'}, content: {type: 'string'},
         targetExcerpt:{type:'string'},
         evidence: {type: 'array', items: {type: 'object', additionalProperties: false, required: ['actorId', 'quote'],
@@ -315,6 +370,12 @@ const commitmentSchema: Record<string, unknown> = {
           {type: 'object', additionalProperties: false, required: ['kind', 'clock', 'deadlineQuote'], properties: {
             kind: {const: 'deadline'}, clock: {enum: ['real', 'story']}, deadlineQuote:{type:'string'}, reminderQuote:{type:'string'},
           }},
+        ]},
+        contactRestriction:{oneOf:[
+          {type:'object',additionalProperties:false,required:['kind','startQuote','endQuote'],properties:{
+            kind:{const:'interval'},startQuote:{type:'string'},endQuote:{type:'string'}}},
+          {type:'object',additionalProperties:false,required:['kind','startQuote','endQuote'],properties:{
+            kind:{const:'daily'},startQuote:{type:'string'},endQuote:{type:'string'}}},
         ]},
       }),
     },
@@ -329,9 +390,9 @@ function commitmentOperationSchema(properties:Record<string,unknown>) {
     type:'object',additionalProperties:false,required:[...common,...required],
     properties:Object.fromEntries([...common,...required,...optional].map(key=>[key,key==='action'?{const:action}:properties[key]])),
   });
-  return {oneOf:[branch('propose',definition),branch('establish',definition),
-    branch('revise',[...definition,'targetId'],['targetExcerpt']),
-    ...['confirm','fulfill','cancel'].map(action=>branch(action,['targetId'],['targetExcerpt']))]};
+  return {oneOf:[branch('propose',definition,['contactRestriction']),branch('establish',definition,['contactRestriction']),
+    branch('revise',[...definition,'targetId'],['targetExcerpt','contactRestriction']),
+    ...['confirm','fulfill','cancel','harden'].map(action=>branch(action,['targetId'],['targetExcerpt']))]};
 }
 
 function commitmentReaders(input:CommitmentValidationInput,observation:CommitmentValidationInput['plan']['observations'][number]):Set<string>{

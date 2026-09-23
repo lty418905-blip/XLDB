@@ -1,1 +1,2 @@
+# Preserve release file bytes so MANIFEST.json hashes also match GitHub source ZIPs.
 * -text

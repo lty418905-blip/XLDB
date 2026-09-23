@@ -1,6 +1,6 @@
-import type { StableRelations } from './openher.ts';
+import type { StableRelations,EmotionState } from './openher.ts';
 
-/** A current, accepted directional relationship anchor; transient affect is deliberately absent. */
+/** A current, accepted directional relationship anchor. */
 export interface AddressRelationAnchor {
   sourceId: string;
   revision: number;
@@ -29,19 +29,27 @@ export interface AddressSuggestion {
   address?: string;
   reason: 'explicit_preference' | 'intimacy_rejected' | 'grounded_long_term_relation' | 'public_or_formal' | 'missing_relation_anchor' | 'identity_not_known';
   instruction: string;
+  tone?:'warming'|'settled'|'strained';
+  askNickname?:boolean;
+}
+
+export interface AddressAffect {
+  emotion:Pick<EmotionState,'behavioralSignals'|'criticContext'>;
+  nicknameAsked:boolean;
 }
 
 const MAX_ADDRESS_LENGTH = 120;
 
 /**
  * Produces a narrow presentation hint. It never invents a nickname, changes
- * state, or reads short-term emotion. Callers provide the already-filtered
+ * state. Callers provide the already-filtered
  * directional anchor and only the preferences visible in this scene.
  */
 export function suggestAddress(
   situation: AddressSituation,
   anchor: AddressRelationAnchor | undefined,
   preferences: readonly AddressPreference[] = [],
+  affect?:AddressAffect,
 ): AddressSuggestion {
   validateSituation(situation);
   const applicable = preferences.filter(preference => preference.status === 'accepted' &&
@@ -53,6 +61,25 @@ export function suggestAddress(
     mode: 'explicit', address: explicit.address, reason: 'explicit_preference',
     instruction: '只使用用户明确指定的称谓；不扩写、变形或另造昵称。',
   };
+  if(affect){
+    const warmth=affect.emotion.behavioralSignals.warmth;
+    const conflict=affect.emotion.criticContext.conflictLevel;
+    if(Number.isFinite(warmth)&&Number.isFinite(conflict)){
+      const privateCasual=situation.visibility==='private'&&situation.presentCount===2&&situation.formality==='casual';
+      const grounded=anchor&&validAnchor(anchor)&&isGroundedPositiveRelation(anchor.relations);
+      const warming=privateCasual&&conflict<.5&&(warmth>=.6||grounded);
+      const tone=conflict>=.5?'strained':warming?'warming':'settled';
+      const askNickname=warming&&!affect.nicknameAsked;
+      const instruction=warming
+        ?'当前情绪更温暖，可随感情自然升温，把全名或姓氏加身份的正式称呼逐渐换成对方已明确透露的名；只有全名时不要自行拆姓猜名。'+
+          (askNickname?'尚未问过昵称，可在合适的话题中自然问一次对方喜欢被怎么称呼；这是可选交流，不必本轮强行插入。':'之前已讨论过称呼，沿用已确认偏好；不要重复追问昵称。')
+        :tone==='strained'?'当前情绪存在紧张或冲突，称呼可更克制，结合人设选择全名、已知身份或省略称呼；不是固定降级或惩罚用户。'
+        :'当前称呼可保留全名、已知姓氏加身份或原有叫法，随人设和语境自然变化。';
+      return {mode:grounded&&situation.addresseeIdentityKnown?'personal-name-allowed':'conservative',
+        reason:grounded?'grounded_long_term_relation':situation.addresseeIdentityKnown?'missing_relation_anchor':'identity_not_known',
+        tone,askNickname,instruction:instruction+'这些是情绪驱动的表达倾向，不是固定台词；未知姓名不编造，称呼约定优先。'};
+    }
+  }
   if (!situation.addresseeIdentityKnown) return conservative('identity_not_known');
   if (situation.visibility === 'public' || situation.presentCount > 2 || situation.formality === 'formal') {
     return conservative('public_or_formal');

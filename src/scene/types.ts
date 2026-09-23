@@ -3,6 +3,7 @@ import type { Scope } from '../memory/access.ts';
 import type { EmotionSettings, EmotionState } from '../emotion/openher.ts';
 import type { ValidatedCommitmentOperation } from '../commitments/types.ts';
 import type { ProfileCandidate } from '../user-model/types.ts';
+import type { AbsenceExplanationOperation } from '../emotion/absence-explanation.ts';
 import type { PhysiologyOperation } from './physiology.ts';
 import type { GeographyOperation } from './geography.ts';
 
@@ -31,6 +32,8 @@ export interface SceneEnvelope {
   presentIds: string[];
 }
 export interface SceneMessage extends AcceptedMessage {
+  /** IANA zone captured at first acceptance; legacy sources without one replay in UTC. */
+  acceptedTimeZone?: string;
   /** Native theatre prose; participants must be established by body evidence. */
   automatic?: boolean;
   envelope: SceneEnvelope;
@@ -79,6 +82,9 @@ export interface PerspectivePlan { observations: Observation[]; unresolved: stri
 export interface SceneAnalysis {
   plan: PerspectivePlan;
   characters: Record<string, Analysis>;
+  /** Source-grounded reply expectation for accepted companion assistant text. */
+  contactResponseExpectation?: {expected:boolean|null;quote:string|null};
+  absenceExplanation?:AbsenceExplanationOperation|null;
   worldEffects?: unknown[];
   /** Locally grounded operations; raw model candidates are never persisted here. */
   commitmentOperations?: ValidatedCommitmentOperation[];
@@ -93,6 +99,8 @@ export interface SceneAnalysis {
 export interface StoredSceneAnalysis {
   plan: PerspectivePlan | null;
   characters: Record<string, Analysis>;
+  contactResponseExpectation?: {expected:boolean|null;quote:string|null};
+  absenceExplanation?:AbsenceExplanationOperation|null;
   controlRevision?: number;
   worldEffects?: unknown[];
   commitmentOperations?: ValidatedCommitmentOperation[];

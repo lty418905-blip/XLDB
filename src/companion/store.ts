@@ -2,9 +2,10 @@ import {createHash,randomUUID} from 'node:crypto';
 import type {DatabaseSync} from 'node:sqlite';
 import {ensureUserModelSchema,readProfileControls,writeProfileControls} from '../user-model/schema.ts';
 import type {FrontendStrategy,ProfileControls} from '../user-model/types.ts';
-import {nextContactOccurrence,validateContactWindows,validateDate,validateTimeZone} from './time.ts';
-import type {CompanionActivity,CompanionBasis,CompanionDecision,CompanionDelivery,CompanionOpportunity,CompanionState,
-  CompanionStatus,ContactException,ContactSettings,DeliveryClaim,OpportunityClaim,ScheduleOpportunityInput} from './types.ts';
+import {validateContactWindows,validateDate,validateTimeZone} from './time.ts';
+import type {CompanionActivity,CompanionBasis,CompanionDecision,CompanionDelivery,CompanionOpportunity,CompanionState,ConfirmedContactDelivery,
+  CompanionStatus,ContactException,ContactSettings,DeliveryClaim,OpportunityClaim,QuietExceptionBinding,QuietExceptionStatus,
+  ScheduleOpportunityInput} from './types.ts';
 
 interface ContactRow {subject:string;revision:number;time_zone:string;windows:string;exceptions:string;minimum_interval:number;max_unanswered:number;updated:number}
 interface ActivityRow {subject:string;revision:number;semantic_ready_revision:number;last_user_activity:number|null;busy_until:number|null;unanswered_count:number;last_sent:number|null}
@@ -19,6 +20,10 @@ interface DeliveryRow {
   id:string;opportunity_id:string;subject:string;target:string;body:string;status:CompanionDelivery['status'];source_version:number;
   profile_revision:number;activity_revision:number;controls_revision:number;contact_revision:number;claim_token:string|null;
   claim_until:number|null;host:string|null;host_message_id:string|null;result_code:string|null;created:number;updated:number;
+}
+interface QuietExceptionRow {
+  delivery_id:string;subject:string;target:string;scope_key:string;commitment_id:string;commitment_revision:number;
+  window_key:string;source_id:string;source_revision:number;status:'reserved'|'consumed'|'released';updated:number;
 }
 
 export class CompanionStore {
@@ -124,25 +129,28 @@ export class CompanionStore {
       const controls=readProfileControls(this.db,subjectId);if(!controls.proactiveCompanionEnabled)throw new Error('proactive_companion_disabled');
       if(this.hasUnknown(subjectId))return null;
       const activity=this.activity(subjectId);if(activity.semanticReadyRevision!==activity.revision)throw new Error('companion_semantic_pending');
-      const settings=this.contactSettings(subjectId);if(!settings.windows.length&&!settings.exceptions.some(item=>item.mode==='replace'))return null;
-      if(activity.unansweredCount>=settings.maxUnanswered)return null;
-      const multiplier=2**Math.min(activity.unansweredCount,3);
-      const intervalFloor=Math.max(activity.lastSentAtMs===null?0:activity.lastSentAtMs+settings.minimumIntervalMs*multiplier,
-        activity.lastUserActivityAtMs===null?0:activity.lastUserActivityAtMs+settings.minimumIntervalMs);
-      const after=Math.max(nowMs,input.notBeforeMs===undefined?0:time(input.notBeforeMs),activity.busyUntilMs??0,intervalFloor);
-      const occurrence=nextContactOccurrence(settings,after);if(!occurrence)return null;
-      const checkAtMs=Math.max(after,occurrence.startAtMs),expiresAtMs=Math.min(input.expiresAtMs===undefined?occurrence.endAtMs:time(input.expiresAtMs),occurrence.endAtMs);
+      const settings=this.contactSettings(subjectId);
+      const checkAtMs=Math.max(nowMs,input.notBeforeMs===undefined?0:time(input.notBeforeMs),activity.busyUntilMs??0);
+      // The former contact windows and frequency fields remain readable for old data, but do not authorize or limit contact.
+      const expiresAtMs=input.expiresAtMs===undefined?checkAtMs+86_400_000:time(input.expiresAtMs);
       if(expiresAtMs<=checkAtMs)return null;
       const profileRevision=this.profileRevision(subjectId);
-      const opportunityId=hash([subjectId,targetId,opportunityKey,input.kind,occurrence.occurrenceId,input.sourceVersion,
+      const occurrenceId=hash([subjectId,targetId,opportunityKey,input.kind]);
+      // Accepting our own delivery changes the scene version, but does not create
+      // another reason to send the same opportunity. New source revisions and
+      // scheduler wakes already have distinct caller-supplied opportunity keys.
+      const consumed=this.db.prepare("SELECT * FROM companion_opportunities WHERE subject=? AND target=? AND occurrence_id=? AND status='consumed' LIMIT 1")
+        .get(subjectId,targetId,occurrenceId) as OpportunityRow|undefined;
+      if(consumed)return opportunityOf(consumed);
+      const opportunityId=hash([subjectId,targetId,opportunityKey,input.kind,occurrenceId,input.sourceVersion,
         profileRevision,activity.revision,controls.revision,settings.revision]);
       const existing=this.opportunityRow(opportunityId);if(existing)return opportunityOf(existing);
       this.db.prepare(`INSERT INTO companion_opportunities
         (id,subject,target,kind,purpose,topic,basis,occurrence_id,source_version,profile_revision,activity_revision,controls_revision,contact_revision,
         check_at,window_start,window_end,expires_at,status,defer_count,decision,strategy,claim_token,claim_until,created,updated)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'waiting',0,NULL,NULL,NULL,NULL,?,?)`)
-        .run(opportunityId,subjectId,targetId,input.kind,purpose,topic,JSON.stringify(basis),occurrence.occurrenceId,input.sourceVersion,
-          profileRevision,activity.revision,controls.revision,settings.revision,checkAtMs,occurrence.startAtMs,occurrence.endAtMs,expiresAtMs,nowMs,nowMs);
+        .run(opportunityId,subjectId,targetId,input.kind,purpose,topic,JSON.stringify(basis),occurrenceId,input.sourceVersion,
+          profileRevision,activity.revision,controls.revision,settings.revision,checkAtMs,checkAtMs,expiresAtMs,expiresAtMs,nowMs,nowMs);
       this.writeState(subjectId,targetId,'waiting',opportunityId,'scheduled',checkAtMs,nowMs);
       return opportunityOf(this.opportunityRow(opportunityId)!);
     });
@@ -204,24 +212,66 @@ export class CompanionStore {
     });
   }
 
-  queueDelivery(opportunityId:string,body:string,currentSourceVersion:number,nowMs=Date.now()):CompanionDelivery {
+  queueDelivery(opportunityId:string,body:string,currentSourceVersion:number,nowMs=Date.now(),
+    quietExceptions:readonly QuietExceptionBinding[]=[]):CompanionDelivery {
     opportunityId=id(opportunityId);body=text(body,20_000);assertRevision(currentSourceVersion);nowMs=time(nowMs);
+    const bindings=validateQuietBindings(quietExceptions);
     return this.transaction(()=>{
       const opportunity=this.opportunityRow(opportunityId);if(!opportunity)throw new Error('companion_opportunity_not_found');
       this.assertOpportunityCurrent(opportunity,currentSourceVersion,nowMs);
       if(opportunity.status!=='approved'||!opportunity.strategy)throw new Error('companion_opportunity_not_approved');
-      const deliveryId=hash([opportunityId,body]);const existing=this.deliveryRow(deliveryId);if(existing)return deliveryOf(existing);
+      const deliveryId=hash([opportunityId,body]);const existing=this.deliveryRow(deliveryId);
+      if(existing){
+        if(!sameQuietBindings(this.getDeliveryExceptionBindings(deliveryId),bindings))throw new Error('companion_quiet_exception_changed');
+        return deliveryOf(existing);
+      }
       this.db.prepare(`INSERT INTO companion_outbox
         (id,opportunity_id,subject,target,body,status,source_version,profile_revision,activity_revision,controls_revision,contact_revision,
         claim_token,claim_until,host,host_message_id,result_code,created,updated)
         VALUES(?,?,?,?,?,'ready',?,?,?,?,?,NULL,NULL,NULL,NULL,NULL,?,?)`)
         .run(deliveryId,opportunityId,opportunity.subject,opportunity.target,body,opportunity.source_version,opportunity.profile_revision,
           opportunity.activity_revision,opportunity.controls_revision,opportunity.contact_revision,nowMs,nowMs);
+      for(const binding of bindings){
+        const claimed=this.db.prepare(`SELECT status FROM companion_quiet_exceptions WHERE subject=? AND target=? AND scope_key=?
+          AND commitment_id=? AND commitment_revision=? AND window_key=? AND status IN ('reserved','consumed') LIMIT 1`)
+          .get(opportunity.subject,opportunity.target,binding.scopeKey,binding.commitmentId,binding.revision,binding.key);
+        if(claimed)throw new Error('companion_quiet_exception_unavailable');
+        this.db.prepare(`INSERT INTO companion_quiet_exceptions
+          (delivery_id,subject,target,scope_key,commitment_id,commitment_revision,window_key,source_id,source_revision,status,updated)
+          VALUES(?,?,?,?,?,?,?,?,?,'reserved',?)`)
+          .run(deliveryId,opportunity.subject,opportunity.target,binding.scopeKey,binding.commitmentId,binding.revision,
+            binding.key,binding.sourceId,binding.sourceRevision,nowMs);
+      }
       return deliveryOf(this.deliveryRow(deliveryId)!);
     });
   }
 
-  claimDelivery(deliveryId:string,host:string,currentSourceVersion:number,nowMs=Date.now(),leaseMs=60_000):DeliveryClaim {
+  approveAndQueueDelivery(opportunityId:string,claimToken:string,strategy:FrontendStrategy,body:string,
+    currentSourceVersion:number,nowMs=Date.now(),quietExceptions:readonly QuietExceptionBinding[]=[]):CompanionDelivery {
+    return this.transaction(()=>{
+      this.decide(opportunityId,claimToken,{decision:'approve',strategy},currentSourceVersion,nowMs);
+      return this.queueDelivery(opportunityId,body,currentSourceVersion,nowMs,quietExceptions);
+    });
+  }
+
+  quietExceptionStatus(subjectId:string,targetId:string,binding:QuietExceptionBinding):QuietExceptionStatus {
+    subjectId=id(subjectId);targetId=id(targetId);const current=validateQuietBindings([binding])[0]!;
+    const row=this.db.prepare(`SELECT status FROM companion_quiet_exceptions WHERE subject=? AND target=? AND scope_key=?
+      AND commitment_id=? AND commitment_revision=? AND window_key=? AND status IN ('reserved','consumed') LIMIT 1`)
+      .get(subjectId,targetId,current.scopeKey,current.commitmentId,current.revision,current.key) as {status:'reserved'|'consumed'}|undefined;
+    return row?.status??'available';
+  }
+
+  getDeliveryExceptionBindings(deliveryId:string):QuietExceptionBinding[] {
+    deliveryId=id(deliveryId);
+    const rows=this.db.prepare('SELECT * FROM companion_quiet_exceptions WHERE delivery_id=? ORDER BY rowid')
+      .all(deliveryId) as unknown as QuietExceptionRow[];
+    return rows.map(row=>({scopeKey:row.scope_key,commitmentId:row.commitment_id,revision:row.commitment_revision,
+      key:row.window_key,sourceId:row.source_id,sourceRevision:row.source_revision}));
+  }
+
+  claimDelivery(deliveryId:string,host:string,currentSourceVersion:number,nowMs=Date.now(),leaseMs=60_000,
+    currentQuietExceptions?:()=>readonly QuietExceptionBinding[]|null):DeliveryClaim {
     deliveryId=id(deliveryId);host=id(host);assertRevision(currentSourceVersion);nowMs=time(nowMs);lease(leaseMs);
     const result=this.transaction(()=>{
       const row=this.deliveryRow(deliveryId);if(!row)throw new Error('companion_delivery_not_found');
@@ -230,12 +280,24 @@ export class CompanionStore {
       if(row.status==='sending')return {unknown:this.finishDelivery(row,{status:'unknown',code:'claim_lease_expired'},nowMs)} as const;
       if(row.status!=='ready')throw new Error('companion_delivery_unavailable');
       this.assertDeliveryCurrent(row,currentSourceVersion,nowMs);
+      if(!currentQuietExceptions&&this.getDeliveryExceptionBindings(deliveryId).length)
+        throw new Error('companion_quiet_validation_required');
       const claimToken=randomUUID(),claimUntilMs=nowMs+leaseMs;
       this.db.prepare("UPDATE companion_outbox SET status='sending',claim_token=?,claim_until=?,host=?,updated=? WHERE id=?")
         .run(claimToken,claimUntilMs,host,nowMs,deliveryId);
+      if(currentQuietExceptions){
+        const current=currentQuietExceptions();
+        if(current===null||!sameQuietBindings(this.getDeliveryExceptionBindings(deliveryId),validateQuietBindings(current))){
+          this.db.prepare(`UPDATE companion_outbox SET status='cancelled',claim_token=NULL,claim_until=NULL,
+            result_code='quiet_rule_changed',updated=? WHERE id=?`).run(nowMs,deliveryId);
+          this.releaseQuietExceptions(deliveryId,nowMs);
+          return {blocked:true} as const;
+        }
+      }
       return {claim:{delivery:deliveryOf(this.deliveryRow(deliveryId)!),claimToken,claimUntilMs}} as const;
     });
     if('unknown' in result)throw new Error('companion_delivery_unknown');
+    if('blocked' in result)throw new Error('companion_quiet_exception_changed');
     return result.claim;
   }
 
@@ -272,6 +334,7 @@ export class CompanionStore {
       this.db.prepare(`UPDATE companion_outbox SET status='cancelled',claim_token=NULL,claim_until=NULL,result_code='source_changed',updated=?
         WHERE subject=? AND source_version<>?${targetClause} AND status IN ('draft','ready')`)
         .run(nowMs,subjectId,currentSourceVersion,...(targetIds??[]));
+      this.releaseCancelledQuietExceptions(subjectId,nowMs);
       const selected=targetIds?new Set(targetIds):null;
       for(const row of this.states(subjectId))if((!selected||selected.has(row.target))&&!this.hasUncertainDelivery(subjectId,row.target))
         this.writeState(subjectId,row.target,readProfileControls(this.db,subjectId).proactiveCompanionEnabled?'waiting':'disabled',null,'source_changed',null,nowMs);
@@ -296,9 +359,24 @@ export class CompanionStore {
       this.db.prepare(`UPDATE companion_outbox SET status='cancelled',claim_token=NULL,claim_until=NULL,result_code='controls_changed',updated=? WHERE subject=?
         AND (controls_revision<>? OR contact_revision<>? OR profile_revision<>?) AND status IN ('draft','ready')`)
         .run(nowMs,...parameters);
+      this.releaseCancelledQuietExceptions(subjectId,nowMs);
       for(const row of this.states(subjectId))if(!controls.proactiveCompanionEnabled||staleTargets.has(row.target))
         this.writeState(subjectId,row.target,this.hasUncertainDelivery(subjectId,row.target)?'suspended':controls.proactiveCompanionEnabled?'waiting':'disabled',
           null,'controls_changed',null,nowMs);
+    });
+  }
+
+  /** A revised relationship assessment invalidates unsent wording for this one companion. */
+  cancelPendingForTarget(subjectId:string,targetId:string,reason='relationship_corrected',nowMs=Date.now()):void {
+    subjectId=id(subjectId);targetId=id(targetId);reason=id(reason);nowMs=time(nowMs);
+    this.transaction(()=>{
+      this.db.prepare(`UPDATE companion_opportunities SET status='cancelled',claim_token=NULL,claim_until=NULL,updated=?
+        WHERE subject=? AND target=? AND status IN ('waiting','deferred','evaluating','approved')`).run(nowMs,subjectId,targetId);
+      this.db.prepare(`UPDATE companion_outbox SET status='cancelled',claim_token=NULL,claim_until=NULL,result_code=?,updated=?
+        WHERE subject=? AND target=? AND status IN ('draft','ready')`).run(reason,nowMs,subjectId,targetId);
+      this.releaseCancelledQuietExceptions(subjectId,nowMs);
+      this.writeState(subjectId,targetId,this.hasUncertainDelivery(subjectId,targetId)?'suspended':
+        readProfileControls(this.db,subjectId).proactiveCompanionEnabled?'waiting':'disabled',null,reason,null,nowMs);
     });
   }
 
@@ -319,11 +397,30 @@ export class CompanionStore {
     const row=this.deliveryRow(id(deliveryId));return row?deliveryOf(row):null;
   }
 
+  /** Remove the derived text when its accepted scene source is deleted. Keep the receipt for deduplication. */
+  redactDeliveryBody(deliveryId:string,subjectId:string,targetId:string):void {
+    this.db.prepare("UPDATE companion_outbox SET body='' WHERE id=? AND subject=? AND target=? AND status='host_committed'")
+      .run(id(deliveryId),id(subjectId),id(targetId));
+  }
+
+  /** Only actual host-confirmed sends can begin a wait-for-reply episode. */
+  confirmedContactDeliveries(subjectId:string,targetId:string):ConfirmedContactDelivery[] {
+    subjectId=id(subjectId);targetId=id(targetId);
+    const rows=this.db.prepare(`SELECT o.id,o.body,o.host_message_id,o.updated,o.result_code,
+      EXISTS(SELECT 1 FROM companion_quiet_exceptions q WHERE q.delivery_id=o.id AND q.status='consumed') AS quiet_exception
+      FROM companion_outbox o WHERE o.subject=? AND o.target=? AND o.status='host_committed'
+      ORDER BY o.updated,o.id`).all(subjectId,targetId) as unknown as
+      {id:string;body:string;host_message_id:string;updated:number;result_code:string;quiet_exception:number}[];
+    return rows.map(row=>({deliveryId:row.id,subjectId,targetId,body:row.body,hostMessageId:row.host_message_id,
+      confirmedSentAtMs:row.updated,replyTimingKnown:row.result_code!=='sent_time_unknown',quietException:Boolean(row.quiet_exception)}));
+  }
+
   private finishDelivery(row:DeliveryRow,outcome:{status:'sent';hostMessageId:string}|{status:'failed'|'unknown';code:string},nowMs:number):CompanionDelivery {
     if(outcome.status==='sent') {
       const hostMessageId=id(outcome.hostMessageId);
-      this.db.prepare(`UPDATE companion_outbox SET status='host_committed',claim_token=NULL,claim_until=NULL,host_message_id=?,result_code='sent',updated=? WHERE id=?`)
-        .run(hostMessageId,nowMs,row.id);
+      this.db.prepare(`UPDATE companion_outbox SET status='host_committed',claim_token=NULL,claim_until=NULL,host_message_id=?,result_code=?,updated=? WHERE id=?`)
+        .run(hostMessageId,row.status==='unknown'?'sent_time_unknown':'sent',nowMs,row.id);
+      this.consumeQuietExceptions(row.id,nowMs);
       this.db.prepare("UPDATE companion_opportunities SET status='consumed',updated=? WHERE id=?").run(nowMs,row.opportunity_id);
       const activity=this.activity(row.subject),revision=activity.revision+1;
       this.writeActivity({...activity,revision,semanticReadyRevision:revision,unansweredCount:activity.unansweredCount+1,lastSentAtMs:nowMs});
@@ -333,6 +430,8 @@ export class CompanionStore {
       const code=id(outcome.code),status=outcome.status==='unknown'?'unknown':'failed';
       this.db.prepare('UPDATE companion_outbox SET status=?,claim_token=NULL,claim_until=NULL,result_code=?,updated=? WHERE id=?')
         .run(status,code,nowMs,row.id);
+      if(status==='unknown')this.consumeQuietExceptions(row.id,nowMs);
+      else this.releaseQuietExceptions(row.id,nowMs);
       this.writeState(row.subject,row.target,status==='unknown'?'suspended':'cooldown',row.opportunity_id,code,null,nowMs);
     }
     return deliveryOf(this.deliveryRow(row.id)!);
@@ -367,6 +466,19 @@ export class CompanionStore {
       WHERE subject=? AND status IN ('waiting','deferred','evaluating','approved')`).run(nowMs,subjectId);
     this.db.prepare(`UPDATE companion_outbox SET status='cancelled',claim_token=NULL,claim_until=NULL,result_code=?,updated=?
       WHERE subject=? AND status IN ('draft','ready')`).run(reason,nowMs,subjectId);
+    this.releaseCancelledQuietExceptions(subjectId,nowMs);
+  }
+  private consumeQuietExceptions(deliveryId:string,nowMs:number):void {
+    this.db.prepare("UPDATE companion_quiet_exceptions SET status='consumed',updated=? WHERE delivery_id=? AND status='reserved'")
+      .run(nowMs,deliveryId);
+  }
+  private releaseQuietExceptions(deliveryId:string,nowMs:number):void {
+    this.db.prepare("UPDATE companion_quiet_exceptions SET status='released',updated=? WHERE delivery_id=? AND status IN ('reserved','consumed')")
+      .run(nowMs,deliveryId);
+  }
+  private releaseCancelledQuietExceptions(subjectId:string,nowMs:number):void {
+    this.db.prepare(`UPDATE companion_quiet_exceptions SET status='released',updated=? WHERE subject=? AND status='reserved'
+      AND delivery_id IN (SELECT id FROM companion_outbox WHERE status='cancelled')`).run(nowMs,subjectId);
   }
   private hasUnknown(subjectId:string):boolean {
     return Boolean(this.db.prepare("SELECT 1 FROM companion_outbox WHERE subject=? AND status IN ('sending','unknown') LIMIT 1").get(subjectId));
@@ -415,7 +527,14 @@ export class CompanionStore {
         source_version INTEGER NOT NULL,profile_revision INTEGER NOT NULL,activity_revision INTEGER NOT NULL,controls_revision INTEGER NOT NULL,
         contact_revision INTEGER NOT NULL,claim_token TEXT,claim_until INTEGER,host TEXT,host_message_id TEXT,result_code TEXT,
         created INTEGER NOT NULL,updated INTEGER NOT NULL);
-      CREATE INDEX IF NOT EXISTS companion_outbox_status ON companion_outbox(subject,target,status);`);
+      CREATE INDEX IF NOT EXISTS companion_outbox_status ON companion_outbox(subject,target,status);
+      CREATE TABLE IF NOT EXISTS companion_quiet_exceptions (
+        delivery_id TEXT NOT NULL,subject TEXT NOT NULL,target TEXT NOT NULL,scope_key TEXT NOT NULL,
+        commitment_id TEXT NOT NULL,commitment_revision INTEGER NOT NULL,window_key TEXT NOT NULL,
+        source_id TEXT NOT NULL,source_revision INTEGER NOT NULL,status TEXT NOT NULL,updated INTEGER NOT NULL,
+        PRIMARY KEY(delivery_id,scope_key,commitment_id,commitment_revision,window_key));
+      CREATE UNIQUE INDEX IF NOT EXISTS companion_quiet_exception_once ON companion_quiet_exceptions
+        (subject,target,scope_key,commitment_id,commitment_revision,window_key) WHERE status IN ('reserved','consumed');`);
   }
   private transaction<T>(work:()=>T):T {
     const savepoint=`companion_${this.savepointSequence++}`;this.db.exec(`SAVEPOINT ${savepoint}`);
@@ -462,6 +581,22 @@ function validateBasis(value:unknown,kind:string):CompanionBasis[] {
   return value.map(item=>{if(!item||typeof item!=='object')throw new Error('invalid_companion_basis');const row=item as Record<string,unknown>;
     if(!['source','profile','schedule','daily'].includes(row.kind as string))throw new Error('invalid_companion_basis');
     return {kind:row.kind as CompanionBasis['kind'],id:id(row.id),revision:revision(row.revision)};});
+}
+function validateQuietBindings(value:readonly QuietExceptionBinding[]):QuietExceptionBinding[] {
+  if(!Array.isArray(value)||value.length>50)throw new Error('invalid_quiet_exception_bindings');
+  const result=value.map(item=>{
+    if(!item||typeof item!=='object')throw new Error('invalid_quiet_exception_bindings');
+    return {scopeKey:text(item.scopeKey,500),commitmentId:id(item.commitmentId),revision:revision(item.revision),
+      key:text(item.key,500),sourceId:id(item.sourceId),sourceRevision:revision(item.sourceRevision)};
+  });
+  const keys=result.map(item=>JSON.stringify([item.scopeKey,item.commitmentId,item.revision,item.key]));
+  if(new Set(keys).size!==keys.length)throw new Error('invalid_quiet_exception_bindings');
+  return result;
+}
+function sameQuietBindings(a:readonly QuietExceptionBinding[],b:readonly QuietExceptionBinding[]):boolean {
+  const key=(item:QuietExceptionBinding)=>JSON.stringify([item.scopeKey,item.commitmentId,item.revision,item.key,item.sourceId,item.sourceRevision]);
+  const left=a.map(key).sort(),right=b.map(key).sort();
+  return left.length===right.length&&left.every((value,index)=>value===right[index]);
 }
 function validateStrategy(strategy:FrontendStrategy,row:OpportunityRow):void {
   if(!strategy||typeof strategy!=='object'||strategy.sourceVersions.profileRevision!==row.profile_revision||

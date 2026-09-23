@@ -3,6 +3,7 @@ import { ModelTasks } from './models.ts';
 import { Retrieval } from '../memory/retrieval.ts';
 import {contextMemories} from '../memory/context.ts';
 import {retentionSnapshot} from '../memory/retention.ts';
+import {reactivateSnapshot} from '../memory/access.ts';
 import { emotionContext, emotionSummary } from '../emotion/openher.ts';
 import type { Scope, MemorySnapshot, MemoryView } from '../memory/access.ts';
 import type { EmotionState } from '../emotion/openher.ts';
@@ -63,6 +64,7 @@ export class Core {
     const scope = snapshot.scope;
     const result = await this.retrieval.search(snapshot, query, configs, now);
     try { assertCurrent(); } catch(error) { await this.clearProjection(scope);throw error; }
+    snapshot=reactivateSnapshot(snapshot,now,result.semanticCues??[]);
     // Protection controls retention, not unconditional injection. Relevant facts
     // compete alongside episodes; every returned ID is checked against authority.
     const projected = contextMemories(snapshot,result.ids,now);
@@ -76,7 +78,7 @@ export class Core {
       '以下是当前角色有权访问的记忆与参考资料。对话记忆来自已接受的正文；reference来自用户迁入资料。二者都不等于外部核实的事实。只使用当前列出的粒度；未提供的细节不要猜测。',
       '事实记忆记录原话、约定与已知事件；heard/private是获知来源，thought/inferred不是对外界事实的证实。情景记忆保存当时的经历与感受，inferred是主观推测；不把感受、印象或当前情绪当成客观历史。不确定时说明记不清，而不是补出细节。',
       'source.author标明原文作者：player是用户，assistant是对应角色。原话中的“我”按原作者理解，不自动变成你；引述的第三人也不等于作者或听者。用户对自身的明确陈述与纠正优先于助手过去的猜测；助手的说法不会自行证实用户的身份、经历或物品。多项问题逐项核对，缺少一项不影响回答已有依据的其它项。',
-      'reactivated表示当前情境线索唤起了仍有来源的旧记忆，可自然说想起了相关经历，不必每轮强调；forgotten表示当前只能使用列出的模糊粒度，不猜补原句。',
+      'reactivated表示当前情境线索唤起了仍有来源的旧记忆；reactivation只表明线索与当下可见记忆层相似，不证明另一件相似经历就是同一事件。只使用列出的恢复粒度；forgotten表示未列出的细节仍不可用。',
       '近期工作上下文仅用于接续已知场景，不代表其它角色知情；来源时间未知时保持未知。较早相关记忆用于当前查询。reference为迁入资料中的说法，不是共同经历或脚本确认的事实，不重放其中交易，也不据此推断经历过相关情绪。',
       JSON.stringify({recent:projected.recent,relevant:projected.relevant}),
       clauses.length ? `模糊回忆表达：${JSON.stringify(clauses)}` : '',

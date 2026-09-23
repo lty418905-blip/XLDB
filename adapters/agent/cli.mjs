@@ -5,6 +5,7 @@ import {randomUUID} from 'node:crypto';
 import {AgentRuntime} from '../../src/agent/runtime.ts';
 import {createFileHost,listPending} from '../../src/agent/file-host.ts';
 import {safeError} from '../../src/core/service.ts';
+import {loadRetrievalConfig} from './retrieval-config.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const [command,argument,...rest]=process.argv.slice(2);
@@ -32,12 +33,13 @@ if(command==='cancel') {
   const cancel=()=>{cancelled=true;host?.close();};
   process.once('SIGINT',cancel);process.once('SIGTERM',cancel);
   try {
-    const retrieval=request.retrievalConfigPath?JSON.parse(fs.readFileSync(path.resolve(request.retrievalConfigPath),'utf8')):undefined;
+    const retrieval=loadRetrievalConfig(root,request.retrievalConfigPath);
     host=createFileHost(directory);runtime=new AgentRuntime({databasePath:path.join(dataDirectory,'authority.sqlite'),indexPath:path.join(dataDirectory,'indexes'),delegate:host.delegate,retrieval});
     await runtime.clearPendingIndexes();
     let result;
     switch(request.operation) {
       case 'interaction': result=runtime.interaction(request.scope);break;
+      case 'roleplayOpen': result=runtime.openRoleplayTask(request.roster,{directorEnabled:request.directorEnabled});break;
       case 'previewCompanionPreset': result=runtime.previewCompanionPreset(request.scope,request.document);break;
       case 'importCompanionPreset': result=runtime.importCompanionPreset(request.scope,request.document,{expectedVersion:request.expectedVersion,previewId:request.previewId,operationId:request.operationId});break;
       case 'companionPreset': result=runtime.companionPreset(request.scope);break;
@@ -50,7 +52,9 @@ if(command==='cancel') {
       case 'configureResources': result=runtime.configureResources(request.scope,request.settings);break;
       case 'commitments': result=runtime.commitments(request.scope,request.query);break;
       case 'bindSubject': result=runtime.bindSubject(request.scope,request.subjectId);break;
-      case 'profile': result=runtime.profile(request.scope);break;
+      case 'profile': result=runtime.profile(request.scope,request.characterId);break;
+      case 'relationshipAssessment': result=await runtime.relationshipAssessment(request.scope,request.characterId);break;
+      case 'relationshipCorrect': result=runtime.correctRelationship(request.scope,request.characterId,request.correction,request.expectedRevision);break;
       case 'profileControls': result=runtime.setProfileControls(request.scope,request.patch,request.expectedRevision);break;
       case 'profileCorrect': result=runtime.correctProfile(request.scope,request.id,request.correction);break;
       case 'profileDelete': result=runtime.deleteProfile(request.scope,request.id);break;
@@ -93,6 +97,14 @@ if(command==='cancel') {
         if(draft.status!=='prepared') {result=draft;break;}
         const receipt=request.accept?await runtime.accept(request.scope,draft.draftId):runtime.reject(request.scope,draft.draftId);
         result={status:request.accept?(receipt.status==='committed'||receipt.status==='duplicate'?'accepted':'failed'):'preview',answer:draft.answer,userMessageId:draft.userMessageId,receipt};
+        break;
+      }
+      case 'roleplayTurn': {
+        if(typeof request.accept!=='boolean')throw new Error('invalid_accept');
+        const draft=await runtime.prepareRoleplay(request.scope,request.input,request.envelope);
+        if(draft.status!=='prepared') {result=draft;break;}
+        const receipt=request.accept?await runtime.acceptRoleplay(request.scope,draft.draftId):runtime.rejectRoleplay(request.scope,draft.draftId);
+        result={status:request.accept?(receipt.status==='committed'||receipt.status==='duplicate'?'accepted':'failed'):'preview',answer:draft.answer,receipt};
         break;
       }
       case 'regenerate': {

@@ -35,6 +35,18 @@ export function ensureUserModelSchema(db:DatabaseSync):void {
       id TEXT PRIMARY KEY, subject TEXT NOT NULL, purpose TEXT NOT NULL, profile_revision INTEGER NOT NULL,
       controls_revision INTEGER NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS user_model_strategies_active ON user_model_strategies(subject,purpose,status);`);
+  db.exec(`CREATE TABLE IF NOT EXISTS user_model_feedback (
+    id TEXT PRIMARY KEY, subject TEXT NOT NULL, storage_key TEXT NOT NULL, strategy_id TEXT NOT NULL,
+    change TEXT NOT NULL, detail TEXT NOT NULL, created INTEGER NOT NULL, profile_revision INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS user_model_feedback_scope ON user_model_feedback(subject,storage_key,created);
+    CREATE TABLE IF NOT EXISTS user_profile_reflections (
+      subject TEXT NOT NULL, source_scope TEXT NOT NULL, fingerprint TEXT NOT NULL,
+      controls_revision INTEGER NOT NULL, after_profile_revision INTEGER NOT NULL,
+      sources TEXT NOT NULL, actions TEXT NOT NULL, created INTEGER NOT NULL,
+      PRIMARY KEY(subject,source_scope,fingerprint));
+    CREATE TABLE IF NOT EXISTS user_model_contact_pauses (
+      subject TEXT NOT NULL, target TEXT NOT NULL, paused INTEGER NOT NULL, updated INTEGER NOT NULL,
+      PRIMARY KEY(subject,target));`);
 }
 
 export function defaultProfileControls(subjectId:string):ProfileControls {

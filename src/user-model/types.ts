@@ -32,6 +32,7 @@ export interface ProfileControls {
 export interface ProfileCandidate {
   key:string;
   category:ProfileCategory;
+  theme?:ProfileTheme;
   attribution:ProfileAttribution;
   basis:ProfileBasis;
   claim:string;
@@ -46,12 +47,30 @@ export interface ProfileCandidate {
   confidenceBasis:string[];
 }
 
+export const profileThemes=['life_background','daily_routine','communication','support','goals','other'] as const;
+export type ProfileTheme=(typeof profileThemes)[number];
+export interface ProfileReflectionSource {id:string;revision:number;text:string;acceptedAtMs:number;characterId:string}
+export interface ProfileMergeAction {
+  action:'add'|'update'|'nochange';
+  targetEntryId?:string;
+  targetRevision?:number;
+  candidate?:ProfileCandidate;
+  sources?:{id:string;revision:number;evidence:string}[];
+}
+export interface ProfileReflectionTask {
+  schema:'xldb-profile-reflection-task-v1';subjectId:string;scope:SceneScope;characterId:string;
+  profileRevision:number;controlsRevision:number;sourceFingerprint:string;
+  sources:ProfileReflectionSource[];allowedEntryRevisions:Record<string,number>;
+  messages:{role:'system'|'user';content:string}[];
+}
+
 export interface ProfileProjectionSource {
   id:string;
   revision:number;
   status:'accepted'|'deleted'|'needs_review';
   text:string;
   acceptedAtMs:number;
+  characterId?:string;
   candidates?:ProfileCandidate[];
 }
 
@@ -60,6 +79,7 @@ export interface ProfileEntry {
   subjectId:string;
   key:string;
   category:ProfileCategory;
+  theme:ProfileTheme;
   attribution:ProfileAttribution;
   basis:ProfileBasis;
   claim:string;
@@ -70,6 +90,7 @@ export interface ProfileEntry {
   characterIds:string[];
   sessionIds:string[];
   confidenceBasis:string[];
+  evidenceReferences:{sourceId:string;sourceRevision:number;sourceScope:SceneScope;polarity:EvidencePolarity}[];
   supportCount:number;
   counterCount:number;
   corrected:boolean;
@@ -88,6 +109,7 @@ export interface ProfileProjectionResult {
 
 export interface ProfileListOptions {
   purpose:'user'|'read'|'strategy'|'proactive';
+  advanced?:boolean;
   taskPurpose?:string;
   characterId?:string;
   sessionId?:string;
@@ -130,9 +152,24 @@ export interface StrategyTask {
   controlsRevision:number;
   allowedEntryIds:string[];
   allowedEntryRevisions:Record<string,number>;
+  feedback:StrategyFeedback[];
+  advanced:boolean;
   characterId?:string;
   sessionId?:string;
   messages:{role:'system'|'user';content:string}[];
+}
+
+export const strategyFeedbackChanges=['helpful','shorter','longer','fewer_questions','repeated_question','avoid_topic','allow_topic','wait','resume'] as const;
+export type StrategyFeedbackChange=(typeof strategyFeedbackChanges)[number];
+export interface StrategyFeedback {
+  change:StrategyFeedbackChange;
+  detail:string;
+  createdAtMs:number;
+}
+export interface StrategyFeedbackResult {
+  feedbackId:string;
+  profileRevision:number;
+  change:StrategyFeedbackChange;
 }
 
 export interface FrontendStrategy {

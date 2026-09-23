@@ -8,9 +8,11 @@ import type { EmotionDelta } from '../emotion/openher.ts';
 import {isSourceControl,memoryAccesses,preferenceOverrides} from '../core/controls.ts';
 import type {StoredControl} from '../core/controls.ts';
 import type {MemoryCandidate,PreferenceCandidate} from '../core/types.ts';
+import {scopeKey} from '../core/types.ts';
 import {Commitments} from '../commitments/store.ts';
 import type {CommitmentSource} from '../commitments/types.ts';
 import {CompanionStore} from '../companion/store.ts';
+import {RelationshipAssessmentStore} from '../companion/relationship-assessment.ts';
 import {ensureUserModelSchema} from '../user-model/schema.ts';
 import {SceneDirector} from './director.ts';
 import {SceneInteractions} from './interaction.ts';
@@ -107,11 +109,14 @@ interface TargetControlRows {
   subjectBindings:SqlRow[];
   profileControls:SqlRow[];
   profileOverrides:SqlRow[];
+  profileFeedback:SqlRow[];
+  profileContactPauses:SqlRow[];
   contactSettings:SqlRow[];
   companionActivity:SqlRow[];
   companionStates:SqlRow[];
   companionOpportunities:SqlRow[];
   companionReceipts:SqlRow[];
+  relationshipCorrections:SqlRow[];
   interactions:SqlRow[];
   interactionBindings:SqlRow[];
 }
@@ -223,7 +228,7 @@ export async function createAuthorityBackup(databasePath: string, outputRoot = p
   }
   try {
     const copied=new DatabaseSync(destination);
-    try { clearProcessingCandidates(copied);clearDirectorCache(copied); } finally { copied.close(); }
+    try { clearProcessingCandidates(copied);clearDirectorCache(copied);clearRelationshipModels(copied); } finally { copied.close(); }
     const schemaVersion = inspectDatabase(destination);
     const manifest: BackupManifest = {
       schemaVersion,
@@ -400,6 +405,7 @@ function applyRestoreRules(filename: string, rules?: RestoreRules): number {
     for (const [scope,deletions] of sceneScopes) applySceneDeletions(db,scope,deletions);
     rebuildCommitmentProjections(db);
     clearProfileProjections(db);
+    clearRelationshipModels(db);
     if(rules)bumpRestoredVersions(db,rules);
     scheduleRestoredSceneIndexCleanup(db,rules);
     db.exec('COMMIT');
@@ -433,11 +439,15 @@ function captureTargetControls(db:DatabaseSync):TargetControlRows {
     subjectBindings:tableRows(db,'user_subject_bindings'),
     profileControls:tableRows(db,'user_model_controls'),
     profileOverrides:tableRows(db,'user_profile_overrides'),
+    profileFeedback:tableRows(db,'user_model_feedback'),
+    profileContactPauses:tableRows(db,'user_model_contact_pauses'),
     contactSettings:tableRows(db,'companion_contact_settings'),
     companionActivity:tableRows(db,'companion_activity'),
     companionStates:tableRows(db,'companion_state').filter(row=>receiptTargets.has(JSON.stringify([row.subject,row.target]))),
     companionOpportunities:tableRows(db,'companion_opportunities').filter(row=>receiptOpportunityIds.has(String(row.id))),
     companionReceipts,
+    relationshipCorrections:tableRows(db,'companion_relationship_assessments')
+      .filter(row=>row.correction!==null).map(row=>({...row,model:null})),
     interactions:tableRows(db,'scene_interactions'),
     interactionBindings:tableRows(db,'scene_interaction_bindings'),
   };
@@ -446,6 +456,7 @@ function captureTargetControls(db:DatabaseSync):TargetControlRows {
 function ensureExtendedRestoreSchema(db:DatabaseSync):void {
   ensureUserModelSchema(db);
   new CompanionStore(db);
+  new RelationshipAssessmentStore(db);
   new SceneInteractions(db,()=>null);
   new SceneDirector(db);
   new Commitments(db);
@@ -458,12 +469,28 @@ function restoreTargetControls(db:DatabaseSync,rows:TargetControlRows):void {
   replaceRows(db,'user_subject_bindings',rows.subjectBindings);
   mergeNewerRows(db,'user_model_controls',rows.profileControls,['subject'],'revision','updated');
   mergeNewerRows(db,'user_profile_overrides',rows.profileOverrides,['entry_id'],undefined,'updated');
+  mergeNewerRows(db,'user_model_feedback',rows.profileFeedback,['id'],undefined,'created');
+  mergeNewerRows(db,'user_model_contact_pauses',rows.profileContactPauses,['subject','target'],undefined,'updated');
   mergeNewerRows(db,'companion_contact_settings',rows.contactSettings,['subject'],'revision','updated');
   mergeNewerRows(db,'companion_activity',rows.companionActivity,['subject'],'revision');
   mergeNewerRows(db,'companion_state',rows.companionStates,['subject','target'],'revision','updated');
   replaceRows(db,'companion_opportunities',rows.companionOpportunities);
   replaceRows(db,'companion_outbox',rows.companionReceipts);
   restoreInteractionControls(db,rows.interactions,rows.interactionBindings);
+  const activeAgentScopes=new Set((db.prepare(`SELECT b.physical_key FROM scene_interaction_bindings b
+    JOIN scene_interactions i ON i.owner=b.owner
+    JOIN scene_worlds w ON w.key=b.physical_key
+    WHERE b.mode='companion' AND i.active_mode='companion' AND i.host='agent'`).all() as {physical_key:string}[])
+    .map(row=>row.physical_key));
+  mergeNewerRows(db,'companion_relationship_assessments',rows.relationshipCorrections
+    .filter(row=>activeAgentScopes.has(String(row.scope))),
+    ['scope','subject','character'],'revision');
+}
+
+function clearRelationshipModels(db:DatabaseSync):void {
+  if(!tableExists(db,'companion_relationship_assessments'))return;
+  db.exec('DELETE FROM companion_relationship_assessments WHERE correction IS NULL');
+  db.exec('UPDATE companion_relationship_assessments SET model=NULL WHERE model IS NOT NULL');
 }
 
 function restoreInteractionControls(db:DatabaseSync,rows:SqlRow[],bindings:SqlRow[]):void {
@@ -547,6 +574,22 @@ function rebuildCommitmentProjections(db:DatabaseSync):void {
 function clearProfileProjections(db:DatabaseSync):void {
   for(const table of ['user_model_strategies','user_profile_evidence','user_profile_entries','user_profile_state'])
     if(tableExists(db,table))db.exec(`DELETE FROM ${table}`);
+  if(!tableExists(db,'user_profile_reflections'))return;
+  const rows=db.prepare('SELECT subject,source_scope,fingerprint,controls_revision,sources FROM user_profile_reflections').all() as
+    {subject:string;source_scope:string;fingerprint:string;controls_revision:number;sources:string}[];
+  const remove=db.prepare('DELETE FROM user_profile_reflections WHERE subject=? AND source_scope=? AND fingerprint=?');
+  for(const row of rows){
+    const scope=JSON.parse(row.source_scope) as SceneScope,sourceKey=scopeKey(scope);
+    const controls=db.prepare('SELECT revision FROM user_model_controls WHERE subject=?').get(row.subject) as {revision:number}|undefined;
+    const binding=db.prepare(`SELECT 1 FROM scene_interaction_bindings b JOIN scene_interactions i ON i.owner=b.owner
+      WHERE b.physical_key=? AND b.mode='companion' AND i.active_mode='companion' AND i.host='agent'`).get(sourceKey);
+    const refs=JSON.parse(row.sources) as {id:string;revision:number}[];
+    if(!controls||controls.revision!==row.controls_revision||!binding||refs.some(ref=>{
+      const source=db.prepare("SELECT revision,status FROM scene_sources WHERE scope=? AND id=?").get(sourceKey,ref.id) as
+        {revision:number;status:string}|undefined;
+      return !source||source.revision!==ref.revision||source.status!=='accepted';
+    }))remove.run(row.subject,row.source_scope,row.fingerprint);
+  }
 }
 
 function scheduleRestoredSceneIndexCleanup(db:DatabaseSync,rules?:RestoreRules):void {

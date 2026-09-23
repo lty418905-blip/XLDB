@@ -97,6 +97,9 @@ export async function planIdentities(
   run: ModelRunner,
 ): Promise<IdentityPlanResult> {
   const input = planInputOf(value);
+  // A newly attached scope may have no accepted body yet. A source catalogue
+  // alone does not establish who is present in the conversation.
+  if (!input.body.trim()) return { characters: [], missing: [] };
   const raw = await run(config, [
     { role: 'system', content: planPrompt },
     { role: 'user', content: JSON.stringify(input) },
@@ -363,7 +366,7 @@ function planInputOf(value: unknown): IdentityPlanInput {
     id: id(cardValue.id, 'invalid_identity_input'),
     text: boundedText(cardValue.text, MAX_CARD_LENGTH, 'invalid_identity_input', true),
   };
-  const body = boundedText(input.body, MAX_BODY_LENGTH, 'invalid_identity_input');
+  const body = boundedText(input.body, MAX_BODY_LENGTH, 'invalid_identity_input', true);
   if (!Array.isArray(input.index) || input.index.length > MAX_INDEX_ENTRIES) fail('invalid_identity_input');
   const index = input.index.map(value => {
     const entry = record(value, 'invalid_identity_input');

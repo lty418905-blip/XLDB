@@ -148,4 +148,4 @@ Write-JsonAtomic $receiptPath $receipt
 if ($canSkip) { Write-Host '依赖版本与实际运行检查仍有效，已跳过重复 npm 安装。' }
 Write-Host "XLDB 本地依赖安装完成：$root"
 Write-Host "Node.js：v$($node.Version) x64"
-Write-Host '未安装 Python、全局包或模型服务。'
+Write-Host '未更改系统 Python，也未安装全局包或模型服务；AgentJev 版使用包内便携运行时。'

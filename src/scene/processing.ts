@@ -3,7 +3,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import { scopeKey } from '../core/types.ts';
 import type { PerspectivePlan, SceneScope, SceneState } from './types.ts';
 
-export type ProcessingStage = 'perspective' | 'world' | 'memory' | 'emotion' | 'preference' | 'commitment' | 'profile' | 'physiology' | 'geography';
+export type ProcessingStage = 'perspective' | 'world' | 'memory' | 'emotion' | 'preference' | 'commitment' | 'profile' | 'physiology' | 'geography' |
+  'contactResponseExpectation' | 'absenceExplanation';
 export type ProcessingStatus = 'pending' | 'running' | 'ready' | 'failed';
 export type ProcessingFailureKind = 'rate_limited' | 'format' | 'conflict' | 'configuration' | 'transport' | 'validation' | 'unknown';
 

@@ -6,4 +6,5 @@ export {
   validateCommitmentOperations,
 } from './codec.ts';
 export {resolveCommitmentTime} from './time.ts';
+export {contactRestrictionWindow,resolveContactRestriction} from './contact.ts';
 export type * from './types.ts';

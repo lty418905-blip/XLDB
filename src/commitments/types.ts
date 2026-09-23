@@ -1,7 +1,7 @@
 import type { SceneMessage, SceneScope, PerspectivePlan } from '../scene/types.ts';
 
 export type CommitmentMode = 'roleplay' | 'companion';
-export type CommitmentAction = 'propose' | 'confirm' | 'establish' | 'revise' | 'fulfill' | 'cancel';
+export type CommitmentAction = 'propose' | 'confirm' | 'establish' | 'revise' | 'fulfill' | 'cancel' | 'harden';
 export type CommitmentAgreement = 'unilateral' | 'mutual';
 export type CommitmentTerm =
   | { kind: 'unknown' }
@@ -16,6 +16,13 @@ export interface CommitmentEvidence {
   actorId: string;
   quote: string;
 }
+
+export type ContactRestrictionCandidate =
+  | {kind:'interval';startQuote:string;endQuote:string;startAtMs?:number;endAtMs?:number;level?:'soft'|'hard'}
+  | {kind:'daily';startQuote:string;endQuote:string;timeZone?:string;startMinute?:number;endMinute?:number;level?:'soft'|'hard'};
+export type ContactRestriction =
+  | {kind:'interval';startQuote:string;endQuote:string;startAtMs:number;endAtMs:number;level:'soft'|'hard'}
+  | {kind:'daily';startQuote:string;endQuote:string;timeZone:string;startMinute:number;endMinute:number;level:'soft'|'hard'};
 
 /** Model output is only a candidate until validate() grounds it in one accepted source. */
 export interface CommitmentCandidate {
@@ -39,10 +46,12 @@ export interface CommitmentCandidate {
   readers?: string[];
   agreement?: CommitmentAgreement;
   term?: CommitmentCandidateTerm;
+  contactRestriction?:ContactRestrictionCandidate;
 }
 
-export interface ValidatedCommitmentOperation extends Omit<CommitmentCandidate,'term'> {
+export interface ValidatedCommitmentOperation extends Omit<CommitmentCandidate,'term'|'contactRestriction'> {
   term?:CommitmentTerm;
+  contactRestriction?:ContactRestriction;
   commitmentId?: string;
   targetId?: string;
   sourceId: string;
@@ -74,6 +83,8 @@ export interface CommitmentValidationInput {
   /** Immediately preceding accepted source, when one exists. */
   responseTo?:{id:string;revision:number};
   responseContext?:{id:string;revision:number;role:'user'|'assistant';text:string};
+  /** Host binding to a delivered contact exception; never inferred from a model target id. */
+  contactFeedbackTargets?:readonly {id:string;revision:number;sourceId:string;sourceRevision:number}[];
   /** Locally derived transition candidates. An empty array is different from legacy omission. */
   existing?:readonly CommitmentTargetCandidate[];
 }
@@ -92,6 +103,7 @@ export interface CommitmentRecord {
   obligors: string[];
   readers: string[];
   term: CommitmentTerm;
+  contactRestriction?:ContactRestriction;
   createdSourceId: string;
   createdSourceRevision: number;
   latestSourceId: string;
@@ -116,7 +128,8 @@ export interface CommitmentTargetCandidate {
   requiredConsentActorIds:string[];
   missingConsentActorIds:string[];
   adjacent:boolean;
-  allowedActions:Array<'confirm'|'revise'|'fulfill'|'cancel'>;
+  contactRestriction?:ContactRestriction;
+  allowedActions:Array<'confirm'|'revise'|'fulfill'|'cancel'|'harden'>;
 }
 
 export interface CommitmentQuery {
@@ -162,6 +175,7 @@ export interface CommitmentPrompt {
     clockTimeMs?:number;
     timeZone?:string;
     responseTo?:{id:string;revision:number};
+    contactFeedbackTargets?:readonly {id:string;revision:number;sourceId:string;sourceRevision:number}[];
     existing?:readonly CommitmentTargetCandidate[];
   };
   schema: Record<string, unknown>;

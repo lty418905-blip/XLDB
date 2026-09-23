@@ -58,6 +58,22 @@ try {
     node:{version:process.versions.node,architecture:process.arch},
     checks:{typescript:'5.9.3',lancedb:'0.39.0',lancedbNative:'0.39.0',agentCli:'companion_non_model'}
   };
+  const bundlePath=path.join(root,'.local/agentjev/bundle.json');
+  if(fs.existsSync(bundlePath)){
+    const bundle=JSON.parse(fs.readFileSync(bundlePath,'utf8'));
+    const model=path.join(root,'.local/agentjev/model/model.safetensors');
+    assert.equal(fs.statSync(model).size,2393718620,'AgentJev weight file is incomplete');
+    const cache=path.join(root,'.local/agentjev/cache');
+    fs.mkdirSync(cache,{recursive:true});
+    const python=spawnSync(path.join(root,'.local/agentjev/runtime/python.exe'),['-X','utf8','-c',
+      'import json,torch,transformers,safetensors; print(json.dumps(dict(torch=torch.__version__,transformers=transformers.__version__,safetensors=safetensors.__version__)))'],
+      {cwd:root,encoding:'utf8',windowsHide:true,timeout:60000,env:{...process.env,PYTHONUTF8:'1',PYTHONDONTWRITEBYTECODE:'1',
+        HF_HUB_OFFLINE:'1',TRANSFORMERS_OFFLINE:'1',HF_HOME:cache,TEMP:cache,TMP:cache}});
+    assert.equal(python.status,0,'AgentJev portable runtime import failed');
+    const versions=JSON.parse(python.stdout.trim());
+    for(const name of ['torch','transformers','safetensors'])assert.equal(versions[name],bundle.runtime.packages[name]);
+    report.checks.agentjev={status:'runtime_imports_only',versions,modelRevision:bundle.modelRevision};
+  }
   if(!quiet) process.stdout.write(`${JSON.stringify(report)}\n`);
 } finally {
   if(runDirectory&&path.resolve(runDirectory).startsWith(path.join(root,'.local','agent','runs')+path.sep)) fs.rmSync(runDirectory,{recursive:true,force:true});

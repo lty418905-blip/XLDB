@@ -3,7 +3,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {scopeKey} from '../core/types.ts';
 import type {SceneScope} from './types.ts';
 
-export type InteractionHost='sillytavern'|'agent';
+export type InteractionHost='sillytavern'|'agent'|'agent-roleplay';
 export type InteractionMode='roleplay'|'companion';
 
 export interface InteractionState {
@@ -55,7 +55,11 @@ export class SceneInteractions {
     assertHost(host);
     return this.transaction(()=>{
       const existing=this.resolve(scope);
-      if(existing)return this.checkedState(existing,host);
+      if(existing){
+        const current=this.checkedState(existing,host);
+        return host==='sillytavern'&&current.mode==='companion'
+          ?this.switch(scope,host,'roleplay',current.revision):current;
+      }
       const baseScope=structuredClone(scope);
       const owner=scopeKey(baseScope);
       const defaultMode:InteractionMode=host==='agent'?'companion':'roleplay';
@@ -65,7 +69,7 @@ export class SceneInteractions {
       const configuredTimeZone:null=null;
       this.db.prepare(`INSERT INTO scene_interactions
         (owner,base_scope,host,active_mode,revision,director_enabled,time_zone) VALUES(?,?,?,?,1,?,?)`)
-        .run(owner,JSON.stringify(baseScope),host,defaultMode,host==='sillytavern'?1:0,configuredTimeZone);
+        .run(owner,JSON.stringify(baseScope),host,defaultMode,host==='agent'?0:1,configuredTimeZone);
       const otherMode:InteractionMode=originalMode==='roleplay'?'companion':'roleplay';
       const original=baseScope;
       const other=derivedScope(baseScope,otherMode);
@@ -83,13 +87,19 @@ export class SceneInteractions {
     return this.checkedState(row,host);
   }
 
+  roleplay(scope:SceneScope):InteractionState {
+    const row=this.resolve(scope);
+    if(!row||row.active_mode!=='roleplay'||row.host==='agent')throw new Error('invalid_interaction_mode');
+    return this.stateByOwner(row.owner)!;
+  }
+
   switch(scope:SceneScope,host:InteractionHost,mode:InteractionMode,expectedRevision:number):InteractionState {
     assertHost(host);assertMode(mode);assertRevision(expectedRevision);
     return this.transaction(()=>{
       const row=this.resolve(scope);
       if(!row)throw new Error('invalid_interaction_not_open');
       this.assertHost(row,host);
-      if(host==='agent'&&mode!=='companion')throw new Error('invalid_interaction_mode');
+      if(host==='agent'?mode!=='companion':mode!=='roleplay')throw new Error('invalid_interaction_mode');
       if(row.revision!==expectedRevision)throw new Error('context_changed_retry');
       if(row.active_mode===mode)return this.stateByOwner(row.owner)!;
       const bindings=this.bindings(row.owner);
@@ -115,7 +125,7 @@ export class SceneInteractions {
       if(!row)throw new Error('invalid_interaction_not_open');
       this.assertHost(row,host);
       if(row.revision!==expectedRevision)throw new Error('context_changed_retry');
-      if(value.directorEnabled!==undefined&&(host!=='sillytavern'||row.active_mode!=='roleplay'))throw new Error('invalid_interaction_director');
+      if(value.directorEnabled!==undefined&&(host==='agent'||row.active_mode!=='roleplay'))throw new Error('invalid_interaction_director');
       const nextZone=value.timeZone===undefined?row.time_zone:value.timeZone;
       const nextDirector=value.directorEnabled===undefined?row.director_enabled:(value.directorEnabled?1:0);
       if(nextZone===row.time_zone&&nextDirector===row.director_enabled)return this.stateByOwner(row.owner)!;
@@ -143,6 +153,11 @@ export class SceneInteractions {
 
   modeOf(scope:SceneScope):InteractionMode|undefined {
     return (this.db.prepare('SELECT mode FROM scene_interaction_bindings WHERE physical_key=?').get(scopeKey(scope)) as {mode:InteractionMode}|undefined)?.mode;
+  }
+
+  isTavernRoleplay(scope:SceneScope):boolean {
+    const row=this.resolve(scope);
+    return row?.host==='sillytavern'&&row.active_mode==='roleplay'&&this.modeOf(scope)==='roleplay';
   }
 
   /** Bound product calls carry the control revision; legacy unbound low-level scopes remain valid. */
@@ -215,7 +230,7 @@ export class SceneInteractions {
 
   private checkedState(row:InteractionRow,host:InteractionHost):InteractionState {
     this.assertHost(row,host);
-    if(host==='agent'&&row.active_mode!=='companion')throw new Error('invalid_interaction_mode');
+    if(host==='agent'&&row.active_mode!=='companion'||host==='agent-roleplay'&&row.active_mode!=='roleplay')throw new Error('invalid_interaction_mode');
     return this.stateByOwner(row.owner)!;
   }
   private assertHost(row:InteractionRow,host:InteractionHost) {
@@ -288,7 +303,7 @@ function worldMode(serialized:string):'story'|'companion' {
   return value.mode;
 }
 function assertHost(value:unknown):asserts value is InteractionHost {
-  if(value!=='sillytavern'&&value!=='agent')throw new Error('invalid_interaction_host');
+  if(value!=='sillytavern'&&value!=='agent'&&value!=='agent-roleplay')throw new Error('invalid_interaction_host');
 }
 function assertMode(value:unknown):asserts value is InteractionMode {
   if(value!=='roleplay'&&value!=='companion')throw new Error('invalid_interaction_mode');

@@ -1,5 +1,6 @@
-import type {Retention} from './retention.ts';
-import {retainedAccess} from './retention.ts';
+import type {Retention,SemanticCue} from './retention.ts';
+import {retainedAccess,withoutDirectCopy} from './retention.ts';
+export {directlyCopiesPreciseText,withoutDirectCopy} from './retention.ts';
 
 export interface Scope {
   worldId: string;
@@ -37,6 +38,7 @@ export interface Memory {
   retention?:Retention;
   retentionAtMs?:number;
   reactivated?:boolean;
+  reactivation?:{kind:'semantic';cue:string;basis:string};
   detail: string;
   gist: string;
   feeling: string;
@@ -65,6 +67,7 @@ export interface MemorySnapshot {
 
 export interface MemoryView {
   reactivated?:boolean;
+  reactivation?:{kind:'semantic';cue:string;basis:string};
   id: string;
   source: Memory['source'];
   access: Access;
@@ -78,44 +81,6 @@ export interface MemoryView {
   feeling?: string;
   anchor?: string;
   forgotten?: string;
-}
-
-const DIRECT_COPY_RUN = 6;
-const DIRECT_CODE_RUN = 4;
-const conservativeCoarse = {
-  gist: '记得曾发生过一件事，但具体内容已经模糊。',
-  feeling: '这段经历仍留下感觉，但具体感受已经模糊。',
-  anchor: '仍记得这是一件重要的经历。',
-} as const;
-
-/**
- * Deterministic guard for copied precision. It deliberately makes no claim
- * about paraphrases or semantic equivalence; those remain model-quality work.
- */
-export function directlyCopiesPreciseText(detail: string, coarse: string, protectedFacts: readonly string[] = []): boolean {
-  if (!coarse) return false;
-  const projected = compactCopyText(coarse);
-  if (!projected) return false;
-  for (const preciseText of [detail,...protectedFacts]) {
-    const precise = compactCopyText(preciseText);
-    if (!precise) continue;
-    if (precise === projected) return true;
-    if (precise.length >= DIRECT_COPY_RUN && projected.includes(precise)) return true;
-    if (projected.length >= DIRECT_COPY_RUN && precise.includes(projected)) return true;
-    if (sharesExactRun(precise,projected,DIRECT_COPY_RUN)) return true;
-    const codes = precise.match(/[a-z0-9]{4,}/g) ?? [];
-    if (codes.some(code => code.length >= DIRECT_CODE_RUN && projected.includes(code))) return true;
-  }
-  return false;
-}
-
-export function withoutDirectCopy(
-  detail: string,
-  coarse: string,
-  layer: keyof typeof conservativeCoarse,
-  protectedFacts: readonly string[] = [],
-): string {
-  return directlyCopiesPreciseText(detail,coarse,protectedFacts) ? conservativeCoarse[layer] : coarse;
 }
 
 /**
@@ -157,6 +122,7 @@ export function projectMemories(
       },
       access: memory.access,
       ...(memory.reactivated?{reactivated:true}:{}),
+      ...(memory.reactivation?{reactivation:memory.reactivation}:{}),
       kind: memory.kind ?? 'legacy',
       protectedFacts: [...memory.protectedFacts],
     };
@@ -217,22 +183,24 @@ export function projectMemories(
   };
 }
 
-function coarseLayer(memory: Memory, layer: keyof typeof conservativeCoarse): string {
-  return withoutDirectCopy(memory.detail,memory[layer],layer,memory.protectedFacts);
-}
-
-function compactCopyText(value: string): string {
-  return value.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}\s]/gu,'');
-}
-
-function sharesExactRun(left: string, right: string, length: number): boolean {
-  if (left.length < length || right.length < length) return false;
-  const shorter = left.length <= right.length ? left : right;
-  const longer = left.length <= right.length ? right : left;
-  for (let index=0; index<=shorter.length-length; index++) {
-    if (longer.includes(shorter.slice(index,index+length))) return true;
+/** Restore at most one layer from a source-backed, currently visible cue. */
+export function reactivateSnapshot(snapshot:MemorySnapshot,nowMs:number,cues:readonly SemanticCue[]):MemorySnapshot {
+  const views=new Map(projectMemories(snapshot,{scope:snapshot.scope,asOfMs:nowMs,ids:cues.map(cue=>cue.id)}).memories.map(view=>[view.id,view]));
+  const memories=new Map(snapshot.memories);
+  for(const cue of cues){
+    const memory=memories.get(cue.id),view=views.get(cue.id);
+    if(!memory||!view||!cue.basis.trim()||memory.accessOverride||memory.retention?.kind!=='peripheral'||memory.source.reference||
+      !Number.isFinite(cue.distance)||!Number.isFinite(cue.margin)||cue.distance>0.14||cue.margin<0.05)continue;
+    if(![view.gist,view.feeling,view.anchor].filter(Boolean).join('\n').includes(cue.basis))continue;
+    if(view.access!=='gist'&&view.access!=='feeling')continue;
+    const access:Access=view.access==='feeling'?'gist':cue.distance<=0.04&&cue.margin>=0.12?'clear':'gist';
+    memories.set(cue.id,{...memory,access,reactivated:true,reactivation:{kind:'semantic',cue:cue.cue.slice(0,160),basis:cue.basis.slice(0,240)}});
   }
-  return false;
+  return {...snapshot,memories};
+}
+
+function coarseLayer(memory: Memory, layer: 'gist'|'feeling'|'anchor'): string {
+  return withoutDirectCopy(memory.detail,memory[layer],layer,memory.protectedFacts);
 }
 
 function sameScope(a: Scope, b: Scope): boolean {

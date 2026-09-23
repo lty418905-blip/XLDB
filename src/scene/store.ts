@@ -1,4 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
+import {PersonalWeightsStore} from '../companion/personal-weights.ts';
+import {PersonalLearning} from '../companion/personal-learning.ts';
 import {createHash} from 'node:crypto';
 import { createEmotion, advanceEmotion, emotionAt, emotionSummary, emotionSettingsOf, validateEmotionState } from '../emotion/openher.ts';
 import type { EmotionState } from '../emotion/openher.ts';
@@ -19,6 +21,11 @@ import {SceneTransfer} from './transfer.ts';
 import {SceneInteractions} from './interaction.ts';
 import {SceneDirector} from './director.ts';
 import {Commitments,validateCommitmentOperations} from '../commitments/index.ts';
+import {contactRestrictionWindow} from '../commitments/index.ts';
+import {absenceExplanationTimeline} from '../emotion/absence-explanation.ts';
+import {projectContactAffect,projectContactEmotion} from '../emotion/contact-affect.ts';
+import type {ContactOutgoing} from '../emotion/contact-affect.ts';
+import {relationshipAuxiliaryContext} from '../companion/relationship-context.ts';
 import type {CommitmentCandidate,CommitmentMode,ValidatedCommitmentOperation} from '../commitments/types.ts';
 import {NpcResourceController} from './resources.ts';
 import {SceneInitialization} from './initialization.ts';
@@ -28,6 +35,8 @@ import {CompanionStore} from '../companion/index.ts';
 import {PhysiologyStore} from './physiology.ts';
 import {GeographyStore} from './geography.ts';
 import {CompanionPresets} from '../companion/presets.ts';
+import {RelationshipAssessmentStore} from '../companion/relationship-assessment.ts';
+import type {RelationshipAssessmentInput,RelationshipCorrection} from '../companion/relationship-assessment.ts';
 
 export interface SceneSubjectBinding {host:'agent'|'sillytavern';baseScope:SceneScope;subjectId:string;bindingId:string;createdAtMs:number}
 
@@ -45,6 +54,10 @@ export class SceneAuthority {
   readonly initialization:SceneInitialization;
   readonly userModel:UserModelStore;
   readonly companion:CompanionStore;
+  readonly relationshipAssessments:RelationshipAssessmentStore;
+  readonly personalWeights:PersonalWeightsStore;
+  readonly personalLearning:PersonalLearning;
+  personalModelIdentity='';
   readonly physiology:PhysiologyStore;
   readonly geography:GeographyStore;
   readonly presets:CompanionPresets;
@@ -78,12 +91,15 @@ export class SceneAuthority {
     this.commitments=new Commitments(db);
     this.userModel=new UserModelStore(db);
     this.companion=new CompanionStore(db);
+    this.relationshipAssessments=new RelationshipAssessmentStore(db);
+    this.personalWeights=new PersonalWeightsStore(db);
+    this.personalLearning=new PersonalLearning(db,this.personalWeights);
     this.geography=new GeographyStore(db,{
-      state:scope=>this.state(scope),modeOf:scope=>this.interactions.modeOf(scope),transaction:action=>this.transaction(action),
+      state:scope=>this.state(scope),modeOf:scope=>this.interactions.modeOf(scope),fullRoleplay:scope=>this.interactions.isTavernRoleplay(scope),transaction:action=>this.transaction(action),
       checkpoint:(scope,reason)=>{this.lifecycle.checkpoint(scope,reason,{automatic:true});},bump:scope=>this.bump(scope),
     });
     this.physiology=new PhysiologyStore(db,{
-      state:scope=>this.state(scope),modeOf:scope=>this.interactions.modeOf(scope),
+      state:scope=>this.state(scope),modeOf:scope=>this.interactions.modeOf(scope),fullRoleplay:scope=>this.interactions.isTavernRoleplay(scope),
       clock:(scope,now)=>{const clock=this.interactions.clock(scope,now);return {...clock,timeMs:typeof clock.timeMs==='number'?clock.timeMs:null};},
       transaction:action=>this.transaction(action),
       checkpoint:(scope,reason)=>{this.lifecycle.checkpoint(scope,reason,{automatic:true});},
@@ -119,8 +135,10 @@ export class SceneAuthority {
     return this.transaction(()=>{
       const context=this.companionContext(scope);
       if(!context)throw new Error('invalid_companion_subject_scope');
+      const previousSubject=this.subject(scope)?.subjectId;
       const bindingId=subjectBindingId(context.host,context.baseScope);
       const binding=this.userModel.bindSubject(context.host,bindingId,subjectId,nowMs);
+      if(previousSubject!==binding.subjectId)this.relationshipAssessments.clearModels(scope);
       this.rebuildDerived(scope,nowMs);
       return {...context,bindingId:binding.bindingId,subjectId:binding.subjectId,createdAtMs:binding.createdAtMs};
     });
@@ -136,6 +154,46 @@ export class SceneAuthority {
   recordSubjectActivity(scope:SceneScope,nowMs=Date.now()) {
     const binding=this.subject(scope);if(!binding)throw new Error('companion_subject_not_bound');
     return this.companion.recordUserActivity(binding.subjectId,nowMs);
+  }
+
+  correctRelationshipAssessment(scope:SceneScope,characterId:string,correction:RelationshipCorrection,expectedRevision:number) {
+    return this.transaction(()=>{
+      const input=this.relationshipAssessmentInput(scope,characterId);
+      if(!input)throw new Error('relationship_assessment_disabled');
+      const result=this.relationshipAssessments.correct(input,correction,expectedRevision);
+      this.personalLearning.synchronizeCorrections(this.personalLearning.key(scope,input.subjectId,characterId),result);
+      this.companion.cancelPendingForTarget(input.subjectId,this.companionTarget(scope,characterId));
+      return result;
+    });
+  }
+
+  relationshipAssessmentInput(scope:SceneScope,characterId:string,nowMs=Date.now()):RelationshipAssessmentInput|null {
+    const subject=this.subject(scope),state=this.state(scope);
+    if(subject?.host!=='agent'||this.interactions.modeOf(scope)!=='companion')return null;
+    if(!state.roster.characters.some(character=>character.id===characterId))throw new Error('invalid_scene_character');
+    const controls=this.userModel.controls(subject.subjectId);
+    if(!controls.profileLearningEnabled||!controls.personalizationEnabled)return null;
+    const sources=state.sources.filter(source=>source.status==='accepted'&&source.processing==='ready'&&
+      source.envelope.mode==='direct'&&source.envelope.targetId===characterId&&
+      source.envelope.presentIds.length===1&&source.envelope.presentIds[0]===characterId&&
+      (source.role==='user'||source.role==='assistant'&&source.speakerId===characterId))
+      .slice(-12).map(source=>({id:source.id,revision:source.revision,text:source.text,role:source.role,
+        acceptedAtMs:source.acceptedAtMs}));
+    const projection=this.contactEmotionProjection(scope,characterId,nowMs,state);
+    const options={characterId,sessionId:scope.sessionId,nowMs,advanced:false} as const;
+    const replyEntries=this.userModel.listEntries(subject.subjectId,{purpose:'strategy',taskPurpose:'reply',...options});
+    const proactiveIds=new Set(this.userModel.listEntries(subject.subjectId,
+      {purpose:'proactive',taskPurpose:'proactive',...options}).map(entry=>entry.id));
+    const profileEntries=replyEntries.filter(entry=>proactiveIds.has(entry.id));
+    const commitments=this.commitments.list(scope,{readerId:characterId,status:'active',mode:'companion'});
+    const contactWindowState=this.commitments.listActiveContactRestrictions(scope,{obligorId:characterId,readerId:characterId})
+      .flatMap(record=>{const window=contactRestrictionWindow(record,nowMs);
+        return window?[`${window.commitmentId}@${window.revision}:${window.level}:${window.key}`]:[];});
+    const auxiliaryContext=relationshipAuxiliaryContext({nowMs,timeZone:this.interactions.clock(scope).timeZone??'UTC',
+      affect:projection.affect,profileEntries,commitments,emotion:projection.emotion,contactWindowState});
+    return {scope,subjectId:subject.subjectId,characterId,sourceVersion:state.version,controlsRevision:controls.revision,sources,
+      personalParameterVersion:this.personalWeights.version(this.personalLearning.key(scope,subject.subjectId,characterId),'relationship',this.personalModelIdentity),
+      auxiliaryContext};
   }
 
   markSubjectActivityReady(scope:SceneScope,activityRevision:number,nowMs=Date.now()) {
@@ -164,6 +222,7 @@ export class SceneAuthority {
       this.db.prepare(`INSERT INTO scene_worlds VALUES(?,?,?,1,?)
         ON CONFLICT(key) DO UPDATE SET roster=excluded.roster,version=scene_worlds.version+1`)
         .run(scopeKey(scope), JSON.stringify(scope), JSON.stringify(roster), now);
+      this.relationshipAssessments.clearModels(scope);
       this.invalidateConfigurationChanges(scope,state,roster);
       const worldSettings=this.worldSettings(scope);
       if(worldSettings){
@@ -217,7 +276,10 @@ export class SceneAuthority {
         const acceptedAtMs = previous?.acceptedAtMs ?? Math.min(message.acceptedAtMs,now);
         // Editing an existing source is an explicit user correction, not a replay of its old derivation.
         const replyTo=message.replyTo??previous?.replyTo;
-        const next: SceneMessage = {...message,revision,acceptedAtMs,dependencies:message.dependencies??previous?.dependencies??[],...(replyTo?{replyTo}:{})};
+        const acceptedTimeZone=previous?previous.acceptedTimeZone:(this.interactions.modeOf(scope)==='companion'
+          ?this.interactions.clock(scope).timeZone??'UTC':'UTC');
+        const next: SceneMessage = {...message,revision,acceptedAtMs,acceptedTimeZone,
+          dependencies:message.dependencies??previous?.dependencies??[],...(replyTo?{replyTo}:{})};
         if(replyTo){
           const current=this.state(scope).sources,origin=current.find(source=>source.id===replyTo.id);
           if(next.role!=='assistant'||!origin||origin.status!=='accepted'||origin.revision!==replyTo.revision||origin.id===next.id||
@@ -248,6 +310,11 @@ export class SceneAuthority {
         delete (erased as Partial<SceneSource>).analysis;
         this.db.prepare("UPDATE scene_sources SET revision=revision+1,message=?,observed=?,status='deleted',processing='ready',analysis=NULL WHERE scope=? AND id=?")
           .run(JSON.stringify(erased),now,scopeKey(scope),source.id);
+        if(source.id.startsWith('proactive:')&&source.role==='assistant'&&source.speakerId){
+          const binding=this.subject(scope);
+          if(binding)this.companion.redactDeliveryBody(source.id.slice('proactive:'.length),binding.subjectId,
+            this.companionTarget(scope,source.speakerId));
+        }
         const preferences=this.db.prepare('SELECT character,id FROM scene_preference_controls WHERE scope=?').all(scopeKey(scope)) as {character:string;id:string}[];
         for(const preference of preferences)if(preferenceSourceId(preference.id)===source.id)this.db.prepare('DELETE FROM scene_preference_controls WHERE scope=? AND character=? AND id=?').run(scopeKey(scope),preference.character,preference.id);
         deletedSourceIds.add(source.id);
@@ -292,11 +359,10 @@ export class SceneAuthority {
       const prepared=results.map(result=>{
         const source=state.sources.find(item=>item.id===result.id);
         if(!source||source.status!=='accepted'||source.revision!==result.revision)throw new Error('context_changed_retry');
-        return {...result,analysis:localAnalysis(result.analysis,source.text)};
+        return {...result,analysis:localAnalysis(result.analysis,source)};
       });
       const settings=this.worldSettings(scope);
-      const mode=this.interactions.modeOf(scope),effective=[...state.sources];
-      const timeZone=mode?this.interactions.clock(scope,state.createdAtMs).timeZone:undefined;
+      const effective=[...state.sources];
       for(const [index,source] of state.sources.entries()){
         const result=prepared.find(item=>item.id===source.id);if(!result)continue;
         effective[index]={...source,processing:'ready',analysis:result.analysis};
@@ -304,7 +370,7 @@ export class SceneAuthority {
           realClockTimeMs:source.acceptedAtMs,
           // Replay this source's accepted story effects; never consult current time.
           storyClockTimeMs:settings?.mode==='story'?this.emotionTime(scope,effective.slice(0,index+1),source.acceptedAtMs):undefined,
-          timeZone,
+          timeZone:source.acceptedTimeZone,
         });
         effective[index]={...source,processing:'ready',analysis:result.analysis};
       }
@@ -437,6 +503,40 @@ export class SceneAuthority {
     const emotion=this.emotion(scope,characterId,now,state);
     const relation=targetId===null?undefined:this.relationshipAnchor(scope,characterId,targetId,state);
     return {...emotion,stableRelations:relation?.relations??{depth:0,trust:0,valence:0}};
+  }
+
+  /** One source-bound contact projection shared by foreground, proactive, and relationship reads. */
+  contactEmotionProjection(scope:SceneScope,characterId:string,nowMs:number,state=this.state(scope),
+    currentReply:{sourceId:string;revision:number}|null=null){
+    const base=this.responseEmotion(scope,characterId,nowMs,state);
+    const subject=this.subject(scope);
+    if(subject?.host!=='agent'||this.interactions.modeOf(scope)!=='companion')return {emotion:base,affect:null};
+    const targetId=this.companionTarget(scope,characterId);
+    const confirmed=this.companion.confirmedContactDeliveries(subject.subjectId,targetId);
+    const confirmedById=new Map(confirmed.map(item=>[item.deliveryId,item]));
+    const outgoing:ContactOutgoing[]=state.sources.flatMap((source,index)=>{
+      if(source.status!=='accepted'||source.processing!=='ready'||source.role!=='assistant'||
+        source.envelope.mode!=='direct'||source.envelope.targetId!==characterId||source.speakerId!==characterId)return [];
+      const delivery=source.id.startsWith('proactive:')?confirmedById.get(source.id.slice('proactive:'.length)):undefined;
+      return [{id:source.id,targetId:characterId,atMs:source.acceptedAtMs,body:source.text,kind:'accepted_assistant' as const,
+        sequence:index,hostMessageId:delivery?.hostMessageId,
+        responseExpectation:delivery?.replyTimingKnown===false?{expected:null,quote:null}:
+          source.analysis?.contactResponseExpectation??{expected:null,quote:null},quietException:delivery?.quietException??false}];
+    });
+    outgoing.push(...confirmed.map((item,index)=>({id:item.deliveryId,targetId:characterId,atMs:item.confirmedSentAtMs,
+      body:item.body,kind:'confirmed_proactive' as const,sequence:-confirmed.length+index,
+      hostMessageId:item.hostMessageId,responseExpectation:{expected:null,quote:null},quietException:item.quietException})));
+    const replies=state.sources.flatMap((source,index)=>source.status==='accepted'&&source.processing==='ready'&&source.role==='user'&&
+      source.envelope.mode==='direct'&&source.envelope.targetId===characterId&&source.envelope.presentIds.length===1&&
+      source.envelope.presentIds[0]===characterId?[{sourceId:source.id,revision:source.revision,targetId:characterId,
+        acceptedAtMs:source.acceptedAtMs,sequence:index}]:[]);
+    const replySource=currentReply?state.sources.find(source=>source.id===currentReply.sourceId&&source.revision===currentReply.revision):null;
+    const currentExplanation=replySource?.analysis?.absenceExplanation?.kind==='return'
+      ?replySource.analysis.absenceExplanation.quote:null;
+    const affect=projectContactAffect({targetId:characterId,nowMs,outgoing,replies,
+      explanations:absenceExplanationTimeline(state.sources,characterId),currentReply,currentExplanation,emotion:base});
+    const actor=state.roster.characters.find(item=>item.id===characterId);
+    return {emotion:projectContactEmotion(base,affect,actor?.emotion),affect};
   }
 
   /** Story metabolism follows accepted narrative time, not wall-clock waiting. */
@@ -598,10 +698,24 @@ export class SceneAuthority {
     const state=this.state(scope);
     this.commitments.replaceProjection(scope,state.sources);
     const binding=this.subject(scope);
-    if(!binding)return;
-    this.userModel.rebuildProjection(binding.subjectId,scope,state.sources.map(source=>({id:source.id,revision:source.revision,status:source.status,
-      text:source.text,acceptedAtMs:source.acceptedAtMs,candidates:source.analysis?.userModelCandidates})),nowMs);
+    if(!binding){this.relationshipAssessments.clearModels(scope);return;}
+    const agentCompanion=binding.host==='agent'&&this.companionContext(scope)?.host==='agent';
+    if(!agentCompanion)this.relationshipAssessments.clearModels(scope);
+    this.userModel.rebuildProjection(binding.subjectId,scope,agentCompanion?state.sources.filter(source=>source.role==='user'&&
+      source.envelope.mode==='direct'&&source.envelope.presentIds.length===1&&source.envelope.presentIds[0]===source.envelope.targetId)
+      .map(source=>({id:source.id,revision:source.revision,status:source.status,text:source.text,acceptedAtMs:source.acceptedAtMs,
+        characterId:source.envelope.targetId,candidates:source.analysis?.userModelCandidates})):[],nowMs,agentCompanion);
     this.companion.invalidateSources(binding.subjectId,state.version,state.roster.characters.map(character=>companionTargetId(scope,character.id)),nowMs);
+    for(const character of agentCompanion?state.roster.characters:[]){
+      const controls=this.userModel.controls(binding.subjectId);
+      const learningSources=state.sources.filter(source=>source.status==='accepted'&&source.processing==='ready'&&
+        source.envelope.mode==='direct'&&source.envelope.targetId===character.id&&source.envelope.presentIds.length===1&&
+        source.envelope.presentIds[0]===character.id&&(source.role==='user'||source.role==='assistant'&&source.speakerId===character.id));
+      this.personalLearning.synchronize(this.personalLearning.key(scope,binding.subjectId,character.id),learningSources,
+        controls.revision,controls.personalizationEnabled&&controls.profileLearningEnabled);
+      const input=this.relationshipAssessmentInput(scope,character.id,nowMs);
+      if(input)this.relationshipAssessments.clearStale(input);else this.relationshipAssessments.clearModels(scope);
+    }
   }
   private invalidateCausalSuffix(scope:SceneScope,changes:{index:number;characters:Set<string>}[]) {
     if(!changes.length)return;
@@ -771,16 +885,28 @@ function preferenceControlId(sourceId:string,preference:{category:string;quote:s
   return `${sourceId}:pref:@${createHash('sha256').update(JSON.stringify([preference.category,preference.quote])).digest('hex')}`;
 }
 function preferenceSourceId(id:string) { return id.slice(0,id.lastIndexOf(':pref:@')); }
-function localAnalysis(value:SceneAnalysis,sourceText:string):SceneAnalysis {
+function localAnalysis(value:SceneAnalysis,source:SceneSource):SceneAnalysis {
   const input=value as SceneAnalysis&{emotionStates?:unknown};
+  const expectation=input.contactResponseExpectation;
+  if(expectation!==undefined&&(typeof expectation!=='object'||expectation===null||
+    ![true,false,null].includes(expectation.expected)||
+    (expectation.quote!==null&&(typeof expectation.quote!=='string'||!expectation.quote||!source.text.includes(expectation.quote)))))
+    throw new Error('invalid_contact_response_expectation');
+  const absence=input.absenceExplanation;
+  if(absence!==undefined&&absence!==null&&(source.role!=='user'||source.envelope.mode!=='direct'||
+    absence.sourceId!==source.id||absence.sourceRevision!==source.revision||
+    absence.sourceAcceptedAtMs!==source.acceptedAtMs||absence.characterId!==source.envelope.targetId||
+    !source.text.includes(absence.quote)))throw new Error('invalid_absence_evidence');
   const characters=Object.fromEntries(Object.entries(input.characters).map(([id,analysis])=>[id,
     {...analysis,emotion:{...analysis.emotion,stableRelationDelta:{}}}]));
   return {plan:input.plan,characters,
+    ...(expectation===undefined?{}:{contactResponseExpectation:expectation}),
+    ...(absence===undefined?{}:{absenceExplanation:absence}),
     ...(input.worldEffects===undefined?{}:{worldEffects:input.worldEffects}),
     ...(input.commitmentOperations===undefined?{}:{commitmentOperations:input.commitmentOperations}),
     ...(input.physiologyOperations===undefined?{}:{physiologyOperations:input.physiologyOperations}),
     ...(input.geographyOperations===undefined?{}:{geographyOperations:input.geographyOperations}),
-    ...(input.userModelCandidates===undefined?{}:{userModelCandidates:validateUserModelCandidates(input.userModelCandidates,sourceText)})};
+    ...(input.userModelCandidates===undefined?{}:{userModelCandidates:validateUserModelCandidates(input.userModelCandidates,source.text)})};
 }
 function relationshipValidationContext(source:SceneSource,plan:import('./types.ts').PerspectivePlan,roster:SceneRoster,subjectId:string) {
   const observations=plan.observations.filter(observation=>observation.readers.includes(subjectId));

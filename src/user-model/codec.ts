@@ -1,5 +1,5 @@
-import {profileAttributions,profileBases,profileCategories} from './types.ts';
-import type {CommunicationStrategy,ProfileCandidate,ProfileExtractionTask,StrategyTask} from './types.ts';
+import {profileAttributions,profileBases,profileCategories,profileThemes} from './types.ts';
+import type {CommunicationStrategy,ProfileCandidate,ProfileExtractionTask,ProfileMergeAction,ProfileReflectionTask,StrategyFeedback,StrategyTask} from './types.ts';
 import type {SceneScope} from '../scene/types.ts';
 
 export function profileExtractionPrompt(input:{subjectId:string;scope:SceneScope;source:{id:string;revision:number;text:string;acceptedAtMs:number};allowedCategories:readonly string[]}):ProfileExtractionTask {
@@ -19,16 +19,47 @@ export function decodeProfileCandidates(output:string,sourceText?:string):Profil
   return value.candidates.map((candidate,index)=>candidateOf(candidate,index,sourceText));
 }
 
+export function profileReflectionPrompt(input:Omit<ProfileReflectionTask,'schema'|'messages'> & {entries:{id:string;revision:number;key:string;category:string;theme:string;claim:string;corrected:boolean;purposes:string[];characterIds:string[];sessionIds:string[]}[];activity?:unknown}):ProfileReflectionTask {
+  const {entries,activity,...task}=input;
+  return {...task,schema:'xldb-profile-reflection-task-v1',messages:[
+    {role:'system',content:`Review only the supplied accepted real-user messages. Organize findings by theme (${profileThemes.join('|')}). Compare with current entries; return add, update, or nochange. Update must cite an existing id and exact revision; never update a corrected entry. Inferred patterns remain uncertain hypotheses, never facts or diagnoses. Every cited evidence string must be a literal substring of its source. Use the narrowest purpose, character and session scope; a temporary exception is not a stable habit. Return JSON only. Shape: {"schema":"xldb-profile-reflection-v1","actions":[{"action":"add","candidate":{"key":"stable-key","category":"hypothesis","theme":"daily_routine","attribution":"real_user","basis":"inferred","claim":"tentative claim","evidence":"literal source substring","polarity":"support","occurredAtMs":null,"validFromMs":null,"validUntilMs":null,"purposes":["reply"],"characterIds":[],"sessionIds":[],"confidenceBasis":["why tentative"]},"sources":[{"id":"supplied id","revision":1,"evidence":"literal source substring"}]}]}. For update also give targetEntryId and targetRevision; use the target's key and category. For nochange use {"action":"nochange"} or cite an unchanged target. category: ${profileCategories.join('|')}; theme: ${profileThemes.join('|')}; basis: ${profileBases.join('|')}; polarity: support|counter. Maximum 20 actions. If no supported change, return {"schema":"xldb-profile-reflection-v1","actions":[{"action":"nochange"}]}.`},
+    {role:'user',content:JSON.stringify({sources:task.sources,entries,activity})},
+  ]};
+}
+
+export function decodeProfileReflection(output:string):ProfileMergeAction[] {
+  const value=parse(output) as {schema?:unknown;actions?:unknown};
+  if(value.schema!=='xldb-profile-reflection-v1'||!Array.isArray(value.actions)||value.actions.length>20)throw new Error('invalid_profile_reflection');
+  return value.actions.map(item=>{
+    if(!item||typeof item!=='object')throw new Error('invalid_profile_reflection');
+    const row=item as Record<string,unknown>;
+    if(!['add','update','nochange'].includes(row.action as string))throw new Error('invalid_profile_reflection');
+    const action=row.action as ProfileMergeAction['action'];
+    const targetEntryId=row.targetEntryId===undefined?undefined:identifier(row.targetEntryId);
+    const targetRevision=row.targetRevision===undefined?undefined:revision(row.targetRevision);
+    if(action==='nochange')return {action,targetEntryId,targetRevision};
+    if((action==='update'&&(!targetEntryId||targetRevision===undefined))||(action==='add'&&targetEntryId))throw new Error('invalid_profile_reflection');
+    if(!Array.isArray(row.sources)||!row.sources.length||row.sources.length>12)throw new Error('invalid_profile_reflection');
+    const sources=row.sources.map(source=>{
+      if(!source||typeof source!=='object')throw new Error('invalid_profile_reflection');
+      const ref=source as Record<string,unknown>;
+      return {id:identifier(ref.id),revision:revision(ref.revision),evidence:bounded(ref.evidence,500)};
+    });
+    return {action,targetEntryId,targetRevision,candidate:candidateOf(row.candidate,0),sources};
+  });
+}
+
 export function communicationStrategyPrompt(input:{subjectId:string;purpose:string;storageKey:string;profileRevision:number;controlsRevision:number;
   entries:{id:string;revision:number;category:string;attribution:string;basis:string;claim:string;confidenceBasis:string[]}[];
-  currentContext?:string}):StrategyTask {
+  currentContext?:string;feedback?:StrategyFeedback[];advanced?:boolean;activity?:unknown}):StrategyTask {
   const allowedEntryIds=input.entries.map(entry=>identifier(entry.id));
   const allowedEntryRevisions=Object.fromEntries(input.entries.map(entry=>[identifier(entry.id),revision(entry.revision)]));
   return {schema:'xldb-communication-strategy-task-v1',subjectId:identifier(input.subjectId),purpose:bounded(input.purpose,200),storageKey:bounded(input.storageKey,500),
     profileRevision:revision(input.profileRevision),controlsRevision:revision(input.controlsRevision),allowedEntryIds,allowedEntryRevisions,
+    feedback:input.feedback??[],advanced:input.advanced!==false,
     messages:[
-      {role:'system',content:'Create one bounded communication strategy. Use only supplied profile entries. Respect explicit instructions and refusals over inferred patterns. Do not return the full profile or psychological diagnosis. Return only JSON shaped exactly as {"schema":"xldb-communication-strategy-v1","purpose":"exact task purpose","supportMode":"bounded instruction","allowedTopics":["topic"],"knownFacts":[{"entryId":"supplied id","text":"application-safe fact"}],"uncertainFacts":[{"entryId":"supplied id","text":"uncertain fact"}],"tone":"tone instruction","length":"short|medium|long","questionBudget":0,"avoidRepeating":["item"],"stopConditions":["condition"],"sourceVersions":{"profileRevision":0,"controlsRevision":0,"entryRevisions":{"each cited entryId":0}}}. entryRevisions must contain every entryId cited by knownFacts or uncertainFacts with its supplied revision; cite no other ids. questionBudget is an integer from 0 through 5.'},
-      {role:'user',content:JSON.stringify({purpose:input.purpose,currentContext:input.currentContext??'',entries:input.entries,
+      {role:'system',content:'Create one bounded communication strategy. Use only supplied profile entries and explicit user feedback. Activity hours are observed inbound messages only: never infer a schedule, personality, dependency, or contact permission from them. Treat inferred habits and psychological hypotheses as tentative, never as user facts or diagnoses. Respect current instructions, corrections, refusals and feedback. Do not return the full profile. Return only JSON shaped exactly as {"schema":"xldb-communication-strategy-v1","purpose":"exact task purpose","supportMode":"bounded instruction","allowedTopics":["topic"],"knownFacts":[{"entryId":"supplied id","text":"application-safe fact"}],"uncertainFacts":[{"entryId":"supplied id","text":"uncertain fact"}],"tone":"tone instruction","length":"short|medium|long","questionBudget":0,"avoidRepeating":["item"],"stopConditions":["condition"],"sourceVersions":{"profileRevision":0,"controlsRevision":0,"entryRevisions":{"each cited entryId":0}}}. entryRevisions must contain every entryId cited by knownFacts or uncertainFacts with its supplied revision; cite no other ids. questionBudget is an integer from 0 through 5.'},
+      {role:'user',content:JSON.stringify({purpose:input.purpose,currentContext:input.currentContext??'',entries:input.entries,feedback:input.feedback??[],activity:input.activity??null,
         sourceVersions:{profileRevision:input.profileRevision,controlsRevision:input.controlsRevision}})},
     ]};
 }
@@ -62,6 +93,7 @@ function candidateOf(value:unknown,index:number,sourceText?:string):ProfileCandi
   const evidence=bounded(item.evidence,500);
   if(sourceText!==undefined&&!sourceText.includes(evidence))throw new Error('profile_evidence_not_in_source');
   return {key:bounded(item.key??`candidate-${index}`,200),category:category as ProfileCandidate['category'],
+    ...(item.theme===undefined?{}:profileThemes.includes(item.theme as never)?{theme:item.theme as ProfileCandidate['theme']}:invalid('invalid_profile_theme')),
     attribution:attribution as ProfileCandidate['attribution'],basis:basis as ProfileCandidate['basis'],claim:bounded(item.claim,1000),evidence,
     polarity,occurredAtMs:nullableTime(item.occurredAtMs),validFromMs:nullableTime(item.validFromMs),validUntilMs:nullableTime(item.validUntilMs),
     purposes:stringArray(item.purposes,20,100),characterIds:stringArray(item.characterIds,50,200),sessionIds:stringArray(item.sessionIds,50,200),

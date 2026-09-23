@@ -63,6 +63,7 @@ interface StoredCorrection extends GeographyCorrectionInput {
 interface GeographyDependencies {
   state:(scope:SceneScope)=>{version:number;roster:SceneRoster;sources:Array<SceneMessage&{status:string;processing:string;analysis?:{geographyOperations?:GeographyOperation[]}|null}>};
   modeOf:(scope:SceneScope)=>'roleplay'|'companion'|undefined;
+  fullRoleplay:(scope:SceneScope)=>boolean;
   transaction:<T>(action:()=>T)=>T;
   checkpoint:(scope:SceneScope,reason:string)=>void;
   bump:(scope:SceneScope)=>void;
@@ -111,6 +112,7 @@ export class GeographyStore {
   configuration(scope:SceneScope):{revision:number}&GeographyConfiguration{
     const row=this.db.prepare('SELECT revision,body FROM scene_geography_settings WHERE scope=?').get(scopeKey(scope)) as SettingsRow|undefined;
     const config=row?configurationOf(JSON.parse(row.body)):structuredClone(defaultConfiguration);
+    if(this.dependencies.fullRoleplay(scope))return {revision:row?.revision??0,...config,enabled:true,followAcceptedProse:true,backgroundSeed:'enabled'};
     return {revision:row?.revision??0,...config};
   }
 

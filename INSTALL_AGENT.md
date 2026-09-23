@@ -1,59 +1,39 @@
-# XLDB Windows x64 安装
+# 安装 XLDB Agent
 
-这份说明面向收到 XLDB ZIP 的 Agent 或 Windows 用户。安装脚本只在解压目录及指定的私有目录中写文件，不安装全局 npm 包，不安装 Python，也不要求填写模型 API。
+当前处于 MVP 测试阶段，功能可能存在实际应用问题。
 
-## 解压并选择模式
+## 1. 安装
 
-把 ZIP 解压到最终安装目录后再运行 setup。目录可以包含空格或中文；不要在临时解压目录安装后再移动。
-
-```powershell
-$zip = 'D:\Downloads\xldb.zip'
-$target = 'D:\XLDB-installed\当前版本'
-New-Item -ItemType Directory -Force -Path $target | Out-Null
-Expand-Archive -LiteralPath $zip -DestinationPath $target
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$target\tools\setup.ps1" -Mode Agent
-```
-
-`Agent` 模式安装并实际运行一次无模型的 CLI 小检查。上述执行策略仅用于本次安装进程，不修改系统策略。它不会启动 HTTP 服务，也不会索取或保存聊天模型 API。Agent 数据默认留在安装根的 `.local/agent/`。
-
-**安装成功后，Agent 必须主动引导一次检索配置选择：**说明本地 BM25 可直接使用，embedding 提供语义向量检索，reranker 对候选重新排序，询问用户现在配置两项、只配置其中一项，还是暂时跳过。按 [Agent 检索配置引导](docs/AGENT.md#检索配置引导) 执行；已有明确选择或有效配置时复用，不反复询问。用户跳过不影响安装成功；未配置不能声称已启用向量检索。这里配置的是检索服务，文本推理继续使用宿主独立子代理。
-
-主 ZIP 的首次 Tavern 路径是运行 `START-XLDB.cmd`。它调用 `setup.ps1 -Mode Tavern -OpenTavern`，由本机安装脚本生成一次性 `PairingCode`，启动核心后再把临时配对信息交给已加载的酒馆转接 JS。下面的显式参数形式用于宿主自动化或诊断；`PairingCode` 是 64 位十六进制临时秘密，不要写入日志或聊天记录。
+在解压后的根目录执行：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$target\tools\setup.ps1" `
-  -Mode Tavern `
-  -PrivateDirectory 'D:\XLDB-installed-private' `
-  -Port 4318 `
-  -PairingCode $pairingCode `
-  -TavernOrigin 'http://127.0.0.1:8000'
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools/setup.ps1 -Mode Agent
 ```
 
-`OpenTavern` 会生成随机配对码、启动核心并打开 `http://localhost:8000`；配对信息只放在浏览器 fragment 中，转接 JS 读取并立即清除 fragment 后完成一次性配对。可用 `-TavernOrigin` 指定酒馆地址。没有 `OpenTavern` 时，脚本不会打开浏览器或其它可见窗口。
+支持 Windows x64；首次安装需要网络和约 5 GB 可用空间。运行时、AgentJev 权重、依赖及缓存仅保存到工作区 `.local/`，不会安装全局 Python 或 npm 包。模型资源与当前 Release 固定绑定，安装器逐项校验 SHA-256。安装后从 `.local/install/install-receipt.json` 读取 `nodePath`，后续命令使用该路径。
 
-未显式指定 `PrivateDirectory` 时，默认使用安装根同级的 `<安装目录名>-private`。例如安装根是 `D:\XLDB`，默认私有目录是 `D:\XLDB-private`。已有配置、数据库和 token 不会被覆盖；升级到新版本目录也不会自动迁移或切换旧数据，宿主必须显式传入要继续使用的私有目录。
+## 2. 首先请用户填写检索配置
 
-Tavern 模式只监听 `127.0.0.1`。`TavernOrigin` 会自动加入允许列表。需要额外来源时可传 `-AllowedOrigins 'http://127.0.0.1:8000','http://localhost:8000'`。启动脚本把一次性配对记录以无 BOM UTF-8 原子写入私有目录，配对记录十分钟过期；脚本输出和 receipt 不包含配对码、其哈希或本地 token。
+安装完成后，Agent 直接告诉用户：
 
-## Node.js 与本地依赖
+> 请在当前工作区新建 `.local/agent/retrieval-api.txt`，按下面模板填写 embedding 和 reranker 的 API 地址、密钥及模型名，保存后告诉我。密钥只填写在文件中，不用发到聊天里。
 
-脚本复用已存在的 Windows x64 Node.js `24.x`，最低版本为 `24.18.1`。没有兼容版本时，它只从 `nodejs.org` 下载固定的 `node-v24.18.1-win-x64.zip`，并按同目录官方 `SHASUMS256.txt` 核对 SHA-256 后解压到 `<安装根>/.local/node/`。
-
-npm 只安装固定的 LanceDB `0.39.0`、Windows x64 原生包、TypeScript `5.9.3` 和对应 Node 类型。npm cache、下载临时文件与运行依赖都位于 `<安装根>/.local/`。成功 receipt 与实际运行检查都仍有效时，重复 setup 会跳过 npm，不会每次联网重装。
-
-npm 单次网络请求最多等待 30 秒并重试一次，失败保留本地缓存和错误日志，排除网络问题后重跑 setup 即可。初次下载仍需要能访问官方 Node 与 npm 服务；缓存恢复不能作为冷网络安装通过的证据。
-
-## 再次启动与停止
-
-```powershell
-& "$target\tools\start.ps1" -PrivateDirectory 'D:\XLDB-installed-private' -Port 4318
-& "$target\tools\stop.ps1"
+```json
+{
+  "embedding": {"baseUrl": "", "key": "", "model": ""},
+  "reranker": {"baseUrl": "", "key": "", "model": ""}
+}
 ```
 
-`start.ps1` 只复用 receipt 能证明属于同一安装根、相同端口和相同目录的健康进程。未知进程占用端口时会失败，不会把它当成 XLDB。`stop.ps1` 会再次核对 PID、Node 路径和核心入口；证据不匹配时不会终止进程。真实启动使用隐藏窗口，日志位于 `<安装根>/.local/logs/server/`。
+TXT 使用 UTF-8，内容保留上述 JSON 格式；API 地址可填写根地址或完整 embeddings/rerank 端点。模型名使用服务提供方给出的标识。查询与允许检索的记忆文本会发往所填服务。CLI 自动读取该文件，已有配置直接复用。若用户明确暂不配置，可继续本地关键词检索。
 
-## Agent Skill 边界
+## 3. 选择入口
 
-ZIP 内的 `.agents/skills/xldb-agent/SKILL.md` 是项目级宿主说明。能发现项目 Skill、并支持 fresh-context 原生子代理的 Agent 可按它调度 XLDB 后台模型任务；不同 Agent 宿主如何发现项目 Skill 由宿主决定，setup 不会修改全局 Codex 配置。
+- **伴侣**：询问用户想要的角色，或展示 `presets/companion/` 的六份预设；依次预览、导入，再开始交谈。
+- **跑团／角色扮演**：根据用户提供的世界、人物与开场建立独立任务；导演默认开启，所有文本推理交由 Agent 自己的独立子代理执行。
 
-安装完成只证明固定依赖、LanceDB 原生模块及 Agent CLI 的无模型路径可运行。它不证明当前宿主能创建隔离的原生子代理，也不代表真实模型质量、真实 SillyTavern 配对或长期体验已经通过。没有 fresh-context 子代理能力的宿主必须报告不支持，不能把本地 CLI 小检查当成真实 Agent 能力验收。
+随后读取 `.agents/skills/xldb-agent/SKILL.md`，执行其任务循环。角色正文经过筛选的上下文生成，用户确认接受后再提交助手候选。不要将跑团内容作为真实用户画像。
+
+## 更新
+
+解压新版本到独立目录，按照 [恢复说明](docs/RECOVERY.md) 备份并迁移数据；不要覆盖运行中的数据库。模型校验匹配时安装器复用已有文件。密钥与 `.local/agent/` 数据不应上传到 GitHub。

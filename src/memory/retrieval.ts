@@ -4,11 +4,14 @@ import path from 'node:path';
 import { connect, Index } from '../../.local/runtime/node_modules/@lancedb/lancedb/dist/index.js';
 import { projectMemories } from './access.ts';
 import {retentionSnapshot} from './retention.ts';
+import type {SemanticCue} from './retention.ts';
 import type { MemorySnapshot, MemoryView, Scope } from './access.ts';
 import type { ModelConfig } from '../core/types.ts';
 import { scopeKey } from '../core/types.ts';
 import {MemoryTokenizer} from './tokenizer.ts';
 import type {ChineseTokenizer} from './tokenizer.ts';
+import {quantizeVector,vectorPrecision} from './vector-forgetting.ts';
+import type {VectorPrecision} from './vector-forgetting.ts';
 
 const CANDIDATE_LIMIT = 20;
 const DEFAULT_EXTERNAL_TIMEOUT_MS = 15_000;
@@ -16,13 +19,13 @@ const SEARCH_LIMIT = 40;
 const EMBEDDING_BATCH = 32;
 
 export type RetrievalConfig = { embedding: ModelConfig; reranker: ModelConfig };
-type IndexedRow = { id: string; text: string; kind: string; lexical?: string; vector?: number[] };
+type IndexedRow = { id: string; text: string; semantic: string; kind: string; precisionBits:VectorPrecision; lexical?: string; vector?: number[] };
 type RerankResult = { index: number; score: number };
-export interface RetrievalOptions {tokenizer?:ChineseTokenizer|'default';minimumRerankScore?:number;externalTimeoutMs?:number}
+export interface RetrievalOptions {tokenizer?:ChineseTokenizer|'default';minimumRerankScore?:number;externalTimeoutMs?:number;vectorIndex?:'auto'|'flat'}
 export interface RetrievalResult {ids:string[];mode:string;tokenizer:ChineseTokenizer;intent:'fact'|'episode'|'balanced';cacheHit:boolean;topScore?:number;
-  fallbackReason?:'embedding_request_failed'|'rerank_request_failed'}
+  fallbackReason?:'embedding_request_failed'|'rerank_request_failed'|'pq_index_build_failed';semanticCues?:SemanticCue[];vectorIndex?:'ivf-pq'|'flat'|'none'}
 type Provider = {url:string;key:string;model:string};
-type Projection = {fingerprint:string;table:any;results:Map<string,RetrievalResult>};
+type Projection = {fingerprint:string;table:any;index:'ivf-pq'|'flat'|'none';indexFailure?:true;results:Map<string,RetrievalResult>};
 
 /**
  * A disposable LanceDB projection.  It contains only text allowed by the supplied
@@ -38,6 +41,7 @@ export class Retrieval {
   private readonly tokenizer:MemoryTokenizer;
   private readonly minimumRerankScore:number|undefined;
   private readonly externalTimeoutMs:number;
+  private readonly vectorIndex:'auto'|'flat';
 
   constructor(directory: string,options:RetrievalOptions={}) {
     this.directory = directory;
@@ -46,6 +50,7 @@ export class Retrieval {
     if(options.externalTimeoutMs!==undefined&&(!Number.isSafeInteger(options.externalTimeoutMs)||options.externalTimeoutMs<1||options.externalTimeoutMs>30_000))throw new Error('invalid_external_timeout');
     this.minimumRerankScore=options.minimumRerankScore;
     this.externalTimeoutMs=options.externalTimeoutMs??DEFAULT_EXTERNAL_TIMEOUT_MS;
+    this.vectorIndex=options.vectorIndex??'auto';
   }
 
   async search(
@@ -65,7 +70,9 @@ export class Retrieval {
         asOfMs: nowMs,
         ids: [...snapshot.memories.keys()],
       }).memories;
-      const rows:IndexedRow[] = views.map(view => ({ id: view.id, text: allowedText(view),kind:view.kind??'legacy' })).filter(row => row.text.length > 0);
+      const viewsById=new Map(views.map(view=>[view.id,view]));
+      const rows:IndexedRow[] = views.map(view => ({ id: view.id, text: allowedText(view),semantic:semanticText(view),kind:view.kind??'legacy',
+        precisionBits:vectorPrecision(snapshot.memories.get(view.id)!,view) })).filter(row => row.text.length > 0);
       const embedding = configured(config.embedding, 'embedding');
       const reranker = configured(config.reranker, 'reranker');
       const mode = embedding ? (reranker ? 'hybrid+rerank' : 'hybrid') : (reranker ? 'bm25+rerank' : 'bm25');
@@ -83,7 +90,7 @@ export class Retrieval {
       const deadline=Date.now()+this.externalTimeoutMs;
       const run=async(activeEmbedding:Provider|undefined,activeReranker:Provider|undefined,resultMode:string,fallbackReason?:RetrievalResult['fallbackReason'])=>{
         const fingerprint = digest(JSON.stringify({
-          format:2,tokenizer:this.tokenizer.fingerprint,embedding:identity(activeEmbedding),rows,
+          format:4,vectorIndex:this.vectorIndex==='auto'?'ivf-pq-8bit-256rows-v1':'flat',tokenizer:this.tokenizer.fingerprint,embedding:identity(activeEmbedding),rows,
         }));
         const projection=await this.table(key,fingerprint,rows,activeEmbedding,deadline);
         const table=projection.table;
@@ -98,29 +105,35 @@ export class Retrieval {
           const lexicalQuery=await this.tokenizer.query(part);
           const [lexical,semantic]=await Promise.all([
             lexicalQuery?table.search(lexicalQuery,'fts','lexical').select(['id','_score']).limit(SEARCH_LIMIT).toArray():[],
-            activeEmbedding?this.queryVector(key,part,activeEmbedding,deadline).then(vector=>table.vectorSearch(vector).column('vector').distanceType('cosine').select(['id','_distance']).limit(SEARCH_LIMIT).toArray()):[],
+            activeEmbedding?this.queryVector(key,part,activeEmbedding,deadline).then(vector=>{
+              let search=table.vectorSearch(vector).column('vector').distanceType('cosine');
+              if(projection.index==='ivf-pq')search=search.nprobes(8).refineFactor(2);
+              return search.select(['id','_distance']).limit(SEARCH_LIMIT).toArray();
+            }):[],
           ]);
           const ranked=new Map<string,number>();addRanks(ranked,lexical);addRanks(ranked,semantic);
           const candidates=[...ranked.entries()].filter(([id])=>rowById.has(id)).map(([id,score])=>({id,score:score*(intent!=='balanced'&&rowById.get(id)!.kind===intent?1.15:1)}))
             .sort((a,b)=>b.score-a.score||a.id.localeCompare(b.id)).slice(0,CANDIDATE_LIMIT).map(item=>item.id);
-          if(!activeReranker||!candidates.length)return {ids:candidates,topScore:undefined};
+          if(!activeReranker||!candidates.length)return {ids:candidates,topScore:undefined,semantic};
           let reranked:RerankResult[];
           try{reranked=await rerank(activeReranker,part,candidates.map(id=>rowById.get(id)!.text),deadline);}
           catch(error){
             if(providerFailure(error)!=='rerank_request_failed')throw error;
-            return {ids:candidates,topScore:undefined,rerankFailed:true};
+            return {ids:candidates,topScore:undefined,rerankFailed:true,semantic};
           }
           // A provider score is an ordering signal, not a calibrated probability.
           const floor=this.minimumRerankScore??-Infinity;
-          return {ids:reranked.filter(item=>item.score>=floor).map(item=>candidates[item.index]),topScore:reranked[0]?.score};
+          return {ids:reranked.filter(item=>item.score>=floor).map(item=>candidates[item.index]),topScore:reranked[0]?.score,semantic};
         }));
         const ids:string[]=[];
         for(let rank=0;rank<CANDIDATE_LIMIT&&ids.length<CANDIDATE_LIMIT;rank++)for(const list of lists){
           const id=list.ids[rank];if(id&&!ids.includes(id)&&ids.length<CANDIDATE_LIMIT)ids.push(id);
         }
         const rerankFailed=lists.some(list=>'rerankFailed' in list&&list.rerankFailed);
+        const semanticCues=activeEmbedding?semanticReactivations(lists[0]?.semantic??[],rowById,viewsById,snapshot,query):[];
         const output=result(rerankFailed?(activeEmbedding?'hybrid-fallback':'bm25-fallback'):resultMode,ids,
-          {topScore:lists[0]?.topScore,...(rerankFailed?{fallbackReason:'rerank_request_failed' as const}:fallbackReason?{fallbackReason}:{})});
+          {topScore:lists[0]?.topScore,semanticCues,vectorIndex:projection.index,...(rerankFailed?{fallbackReason:'rerank_request_failed' as const}:
+            fallbackReason?{fallbackReason}:projection.indexFailure?{fallbackReason:'pq_index_build_failed' as const}:{})});
         if(!rerankFailed)cache(projection.results,cacheKey,output,64);
         return {...output,ids:[...output.ids]};
       };
@@ -156,43 +169,76 @@ export class Retrieval {
     deadline: number,
   ): Promise<Projection> {
     const cached=this.tables.get(key);
-    if(cached?.fingerprint===fingerprint)return cached;
+    if(cached?.fingerprint===fingerprint&&!cached.indexFailure)return cached;
+    const name=projectionName(key);
+    const metadataPath=path.join(this.directory,`${name}.projection.json`);
     try {
-      const name=projectionName(key);
-      const metadataPath=path.join(this.directory,`${name}.projection.json`);
       const database=this.connection??=await connect(this.directory);
-      let metadata:{fingerprint?:string;embedding?:string;tokenizer?:string}={};
+      let metadata:{fingerprint?:string;embedding?:string;tokenizer?:string;index?:'ivf-pq'|'flat'|'none';semanticColumn?:boolean;quantizationVersion?:number;indexFailure?:boolean}={};
       try{metadata=JSON.parse(fs.readFileSync(metadataPath,'utf8'));}catch{/* Disposable cache, rebuild from authority. */}
-      let previous:any;
+      let previous:Awaited<ReturnType<typeof database.openTable>>|undefined;
       try{previous=await database.openTable(name);}catch{/* First projection. */}
-      if(previous&&metadata.fingerprint===fingerprint){
-        const projection={fingerprint,table:previous,results:new Map<string,RetrievalResult>()};cache(this.tables,key,projection,16);return projection;
+      if(previous&&metadata.fingerprint===fingerprint&&!metadata.indexFailure){
+        const indices=await previous.listIndices();
+        const actual=indices.find(item=>item.columns.includes('vector'));
+        if((metadata.index==='ivf-pq'&&actual?.indexType==='IvfPq')||
+          (metadata.index!=='ivf-pq'&&!actual)){
+          const projection={fingerprint,table:previous,index:metadata.index??'none',results:new Map<string,RetrievalResult>()};cache(this.tables,key,projection,16);return projection;
+        }
       }
       const oldRows=new Map<string,IndexedRow>();
       if(previous&&metadata.tokenizer&&(metadata.embedding===identity(embedding)||!embedding)){
-        const stored=await previous.query().select(embedding?['id','text','lexical','vector']:['id','text','lexical']).toArray();
+        // Tables from the pre-semantic projection do not have this column.
+        // Their lexical text may be reused, but their old vectors must be
+        // recomputed from the current permitted semantic text.
+        const columns=embedding?['id','text','lexical','vector']:['id','text','lexical'];
+        if(metadata.semanticColumn)columns.push('semantic');
+        if(metadata.semanticColumn&&metadata.quantizationVersion===1)columns.push('precisionBits');
+        const stored=await previous.query().select(columns).toArray();
         for(const row of stored)oldRows.set(row.id,{...row,...(row.vector?{vector:Array.from(row.vector) as number[]}: {})});
       }
       const indexed:IndexedRow[]=[];const missing:number[]=[];
       for(const row of rows){
         const old=oldRows.get(row.id);const same=old?.text===row.text;
         const lexical=same&&metadata.tokenizer===this.tokenizer.fingerprint&&old.lexical!==undefined?old.lexical:await this.tokenizer.document(row.text);
-        const next={...row,lexical,...(embedding&&same&&old.vector?{vector:old.vector}: {})};
+        const next={...row,lexical,...(embedding&&same&&old.semantic===row.semantic&&old.precisionBits===row.precisionBits&&old.vector?{vector:old.vector}: {})};
         if(embedding&&!next.vector)missing.push(indexed.length);
         indexed.push(next);
       }
       if(embedding)for(let offset=0;offset<missing.length;offset+=EMBEDDING_BATCH){
         const batch=missing.slice(offset,offset+EMBEDDING_BATCH);
-        const vectors=await embed(embedding,batch.map(index=>indexed[index].text),deadline);
-        batch.forEach((index,i)=>{indexed[index].vector=vectors[i];});
+        const vectors=await embed(embedding,batch.map(index=>indexed[index].semantic||indexed[index].text),deadline);
+        batch.forEach((index,i)=>{indexed[index].vector=quantizeVector(vectors[i],indexed[index].precisionBits);});
       }
+      // The index is disposable. Remove the old table before publishing a new
+      // encoding so a failed rebuild cannot leave a mixed or trusted version.
+      if(previous)await database.dropTable(name);
+      fs.rmSync(metadataPath,{force:true});
       const table=await database.createTable(name,indexed,{mode:'overwrite'});
       await table.createIndex('lexical',{config:Index.fts({baseTokenizer:'whitespace',stem:false,removeStopWords:false,asciiFolding:false})});
+      let index:Projection['index']=embedding?'flat':'none';
+      let indexFailure=false;
+      const dimension=indexed[0].vector?.length??0;
+      if(this.vectorIndex==='auto'&&embedding&&indexed.length>=256&&dimension>=16){
+        const numSubVectors=dimension%16===0?dimension/16:dimension%8===0?dimension/8:1;
+        try {
+          await table.createIndex('vector',{config:Index.ivfPq({distanceType:'cosine',numPartitions:Math.max(1,Math.min(16,Math.floor(Math.sqrt(indexed.length)/8))),numSubVectors,numBits:8})});
+          const actual=(await table.listIndices()).find(item=>item.columns.includes('vector'));
+          if(actual?.indexType!=='IvfPq'||actual.numIndexedRows!==indexed.length)throw new Error('index_build_failed');
+          index='ivf-pq';
+        } catch {
+          const partial=(await table.listIndices()).find(item=>item.columns.includes('vector'));
+          if(partial)await table.dropIndex(partial.name);
+          index='flat';
+          indexFailure=true;
+        }
+      }
       fs.mkdirSync(this.directory,{recursive:true});
-      const temporary=metadataPath+'.tmp';fs.writeFileSync(temporary,JSON.stringify({fingerprint,embedding:identity(embedding),tokenizer:this.tokenizer.fingerprint}));fs.renameSync(temporary,metadataPath);
-      const projection={fingerprint,table,results:new Map<string,RetrievalResult>()};cache(this.tables,key,projection,16);return projection;
+      const temporary=metadataPath+'.tmp';fs.writeFileSync(temporary,JSON.stringify({fingerprint,embedding:identity(embedding),tokenizer:this.tokenizer.fingerprint,index,semanticColumn:true,quantizationVersion:1,indexFailure}));fs.renameSync(temporary,metadataPath);
+      const projection={fingerprint,table,index,...(indexFailure?{indexFailure:true as const}:{}),results:new Map<string,RetrievalResult>()};cache(this.tables,key,projection,16);return projection;
     } catch (error) {
       this.tables.delete(key);
+      fs.rmSync(metadataPath,{force:true});
       if (error instanceof Error && (error.message === 'invalid_embedding_response' || error.message === 'embedding_request_failed')) throw error;
       throw new Error('index_build_failed');
     }
@@ -246,6 +292,36 @@ function allowedText(view: MemoryView): string {
     ...(view.episode?.participants??[]),...(view.episode?.sensoryCues??[]),view.episode?.appraisal]
     .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
   return unique(texts).filter(value=>!texts.some(other=>other.length>value.length&&other.includes(value))).join('\n');
+}
+
+function semanticText(view:MemoryView):string {
+  // The reactivation vector is built from the current projection, never from
+  // faded detail, hidden protected facts, or a source quote kept for audit.
+  if(view.access==='gist'||view.access==='feeling'||view.access==='anchor')
+    return unique([view.gist,view.feeling,view.anchor].filter((value):value is string=>!!value?.trim())).join('\n');
+  return allowedText(view);
+}
+
+function semanticReactivations(results:readonly unknown[],rows:Map<string,IndexedRow>,views:Map<string,MemoryView>,
+  snapshot:MemorySnapshot,query:string):SemanticCue[] {
+  const visible=results.map(item=>record(item)).filter(item=>typeof item.id==='string'&&typeof item._distance==='number'&&
+    Number.isFinite(item._distance)&&item._distance>=0).map(item=>({id:item.id as string,distance:item._distance as number}))
+    .filter(item=>{
+      return !!snapshot.memories.get(item.id)&&!!views.get(item.id)&&!!rows.get(item.id)?.semantic;
+    }).sort((a,b)=>a.distance-b.distance);
+  const candidates=visible.filter(item=>{
+      const memory=snapshot.memories.get(item.id)!,view=views.get(item.id)!;
+      return memory.retention?.kind==='peripheral'&&!memory.accessOverride&&
+        !memory.source.reference&&(view.access==='gist'||view.access==='feeling');
+    });
+  if(!candidates.length||candidates[0].distance>0.14)return [];
+  const best=candidates[0];
+  // Every other visible memory competes for event identity, including a clear
+  // or protected memory and a different event extracted from the same source.
+  const next=visible.find(item=>item.id!==best.id);
+  const margin=next?next.distance-best.distance:2;
+  if(margin<0.05)return [];
+  return [{id:best.id,cue:query.slice(0,160),basis:rows.get(best.id)!.semantic,distance:best.distance,margin}];
 }
 
 function recentMemoryIds(views: readonly MemoryView[]): string[] {

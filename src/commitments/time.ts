@@ -40,12 +40,17 @@ export function resolveCommitmentTime(quote:string,context:DeadlineTimeContext):
 }
 
 function localClock(value:string):Pick<DateParts,'hour'|'minute'>|null {
-  const match=/^(上午|下午|晚上|凌晨)?\s*(\d{1,2}|[零〇一二两三四五六七八九十]+)(?::(\d{1,2})|点(?:(半)|((?:\d{1,2}|[零〇一二两三四五六七八九十]+))分?)?)$/.exec(value);
+  const match=/^(清晨|早上|上午|中午|下午|傍晚|晚上|凌晨)?\s*(\d{1,2}|[零〇一二两三四五六七八九十]+)(?::(\d{1,2})|点(?:(半)|((?:\d{1,2}|[零〇一二两三四五六七八九十]+))分?)?)$/.exec(value);
   if(!match)return null;
   let hour=numberOf(match[2]!);
   const minute=match[3]===undefined?(match[4]?30:match[5]===undefined?0:numberOf(match[5]!)):Number(match[3]);
   if(hour===null||minute===null||minute>59||hour>23)return null;
-  if(match[1]==='上午'||match[1]==='凌晨'){if(hour>=12)return null;}
+  if(match[1]==='上午'||match[1]==='凌晨'||match[1]==='早上'||match[1]==='清晨'){if(hour>=12)return null;}
+  else if(match[1]==='中午'){if(hour!==11&&hour!==12)return null;}
+  else if(match[1]==='傍晚'){
+    if(hour>=5&&hour<=7)hour+=12;
+    else if(hour<17||hour>19)return null;
+  }
   else if(match[1]==='下午'||match[1]==='晚上'){
     if(hour===0)return null;
     if(hour<12)hour+=12;

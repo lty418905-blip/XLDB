@@ -1,0 +1,557 @@
+{
+  "format": 1,
+  "kind": "xldb-agent",
+  "version": "0.1.0-mvp",
+  "files": [
+    {
+      "file": ".agents/skills/xldb-agent/SKILL.md",
+      "sha256": "830260a647721e30a97ac87b8efd51cd83d64193d3b55149c88303d4b9bf0b68",
+      "bytes": 8653
+    },
+    {
+      "file": ".gitattributes",
+      "sha256": "c315ea75f3c0ad2ee970f5223ae80c5d50fb8027c13af7fdc3ac992b12c4ba44",
+      "bytes": 93
+    },
+    {
+      "file": ".gitignore",
+      "sha256": "d470988aa7c6067980c1a8ec3c464bee937941dfd60d9ea6f891a9b514a40f91",
+      "bytes": 97
+    },
+    {
+      "file": "adapters/agent/cli.mjs",
+      "sha256": "727c445fe9221dd54360f34bc56f2447443c0437c2e521cd9afa3af9633d973b",
+      "bytes": 12167
+    },
+    {
+      "file": "adapters/agent/retrieval-config.mjs",
+      "sha256": "e91246a5f989a3bdf5184de2f5cd8d77989309ac20ef9af0ab9bf9753ba50e0e",
+      "bytes": 1753
+    },
+    {
+      "file": "AGENTS.md",
+      "sha256": "7bd8e3c51f9292482d2d14571f1ca3e3ee477ee82cb3438b1b72d00e396769b9",
+      "bytes": 804
+    },
+    {
+      "file": "docs/AGENT.md",
+      "sha256": "89f154b0c96679ef24d4f280487e0010870b534c3a9ba9eab21a19172936d28d",
+      "bytes": 5772
+    },
+    {
+      "file": "docs/ARITHMETIC.md",
+      "sha256": "93c10a3814025d89e91fb7182bd15f5b8a259d203433d9a1d29791cb25e08dc6",
+      "bytes": 4298
+    },
+    {
+      "file": "docs/OPENHER_ADOPTION.md",
+      "sha256": "990e0d3c837de9df87c79a0801d01b5cee74ac948f4228488227c0a5324140f1",
+      "bytes": 691
+    },
+    {
+      "file": "docs/RECOVERY.md",
+      "sha256": "1d722e70684c8587cccce088ac9afd26c6941a1427cc51ee5543ba2a7f90264b",
+      "bytes": 1136
+    },
+    {
+      "file": "docs/RETRIEVAL.md",
+      "sha256": "dd161781dc34f2ed1fd7a31d51b2ca3e5ed1f5e1b38f47e80c20db2201db114e",
+      "bytes": 9123
+    },
+    {
+      "file": "INSTALL_AGENT.md",
+      "sha256": "49a5191d79ff08ba0f07e3baa006ba9df025d442facc691927e72763e59bc11a",
+      "bytes": 2227
+    },
+    {
+      "file": "LICENSE.md",
+      "sha256": "21027a8d85e7ce8d911411beac2616ce8a8731c07aeb96c10518b4ed8eef8377",
+      "bytes": 1858
+    },
+    {
+      "file": "package.json",
+      "sha256": "ba501a814ed8463db0faad97e2a92e2064608ec05adb100500c0d9f2256e063c",
+      "bytes": 274
+    },
+    {
+      "file": "presets/companion/affectionate-younger-brother-lu-tinglan.json",
+      "sha256": "054964832669fecf229ddc539ae00753ae69aabc024a3047e99570e101537cbd",
+      "bytes": 4974
+    },
+    {
+      "file": "presets/companion/decisive-executive-cheng-yanzhou.json",
+      "sha256": "b564b21235760a65e6502af1bfe6a4d76d998256be0601976f8577aa258f46a5",
+      "bytes": 4817
+    },
+    {
+      "file": "presets/companion/energetic-young-woman-xia-mingcheng.json",
+      "sha256": "ee24900774c8a86235076c18f637c4945972ef5483c74042c8b3ef57aff62e23",
+      "bytes": 4876
+    },
+    {
+      "file": "presets/companion/gentle-older-sister-shen-zhiwei.json",
+      "sha256": "dfc089a249efcf08b62c328d6e9518c7ba6f0981ca936bba18e6ce3fcb512d55",
+      "bytes": 4968
+    },
+    {
+      "file": "presets/companion/reserved-older-brother-gu-chen.json",
+      "sha256": "be4030fe01b8123c24843799f361ef21cc9e319ed103ae8961ce032596e1cfa1",
+      "bytes": 4793
+    },
+    {
+      "file": "presets/companion/tsundere-younger-sister-tang-yinghe.json",
+      "sha256": "93d30ce2bc630b915e0062f182e36472f4ea8c3b4b4e92767aa3ac2583f67791",
+      "bytes": 4834
+    },
+    {
+      "file": "README.md",
+      "sha256": "8b01f7bac3a08e3976c39f1ddb50dd80482fb1a81e902829ffb2e258b4066a00",
+      "bytes": 2128
+    },
+    {
+      "file": "src/agent/file-host.ts",
+      "sha256": "b591c1986e3f09d65af24d8f433a9b1f5724aece6dc8ef4f52e7217b97566d8e",
+      "bytes": 10037
+    },
+    {
+      "file": "src/agent/runtime.ts",
+      "sha256": "ab3dbced21e958a22d99140958ced8ce81815540c923ab65af7150fe3721c84c",
+      "bytes": 47827
+    },
+    {
+      "file": "src/commitments/codec.ts",
+      "sha256": "07d87c03687d87f5f6d8f8632dfb3a62db0d5c0db2bc519232fd89d6a34b42dd",
+      "bytes": 35222
+    },
+    {
+      "file": "src/commitments/contact.ts",
+      "sha256": "5e34af1df3bade3bff9a6cd50db8ef05e00862fbdaaf20d31aa347f79bd23cce",
+      "bytes": 5470
+    },
+    {
+      "file": "src/commitments/index.ts",
+      "sha256": "d337831d185dec9e2c7db69aaa62232c11ff67b446ae2ab1ec32d9394b8b0a3a",
+      "bytes": 369
+    },
+    {
+      "file": "src/commitments/store.ts",
+      "sha256": "b7e0e7a9c04f3838e9abfc2c3ecda7750bc072e1e1fb4d50e281c3d3ff45dcf9",
+      "bytes": 18189
+    },
+    {
+      "file": "src/commitments/time.ts",
+      "sha256": "9dba40c59b1c9e7153a0ce48798ba86bf9f765e6fd90408fdba235b877147de8",
+      "bytes": 5928
+    },
+    {
+      "file": "src/commitments/types.ts",
+      "sha256": "3abc4bab1765c3f462720a64a12c9560953b336757c94b254df2128f17b5438a",
+      "bytes": 6393
+    },
+    {
+      "file": "src/companion/agentjev.ts",
+      "sha256": "3b323d4220524602ebe55a028822460c26f2aa98b50aecc4ebb6d6e4391d62b3",
+      "bytes": 29760
+    },
+    {
+      "file": "src/companion/codec.ts",
+      "sha256": "9c0520e353d6718e88894181e1109365577263e38fd21197a58fd65a95874ff6",
+      "bytes": 3292
+    },
+    {
+      "file": "src/companion/contact-context.ts",
+      "sha256": "d3037f4f4fb70aadf00a4faa2b4e68052848bd2d14c7b7f9139aed54ff1143c0",
+      "bytes": 7955
+    },
+    {
+      "file": "src/companion/identity-expression.ts",
+      "sha256": "7178d5a6b140d61beca12f86c89061b30f5201eaea502c7f9e5aa49d16437838",
+      "bytes": 4861
+    },
+    {
+      "file": "src/companion/idle-learning.ts",
+      "sha256": "d2980a7d4509d580cd8629861297a99468af7b3fc61a9d6e7f25902044c58bd1",
+      "bytes": 2901
+    },
+    {
+      "file": "src/companion/index.ts",
+      "sha256": "dddccf9bee9df9f10674ac8a2564eae10cfce8a45503cd626b98dda935c883bd",
+      "bytes": 111
+    },
+    {
+      "file": "src/companion/learning-executor.ts",
+      "sha256": "4b18724185fdb71344a3bb7d7d6c25667385129573235993d760e0d0f9d22fb3",
+      "bytes": 2860
+    },
+    {
+      "file": "src/companion/learning-worker.ts",
+      "sha256": "893a165126c6ae32104abc9a2315a272d0c3c9efc9ee5070d388dda47b2b5c34",
+      "bytes": 1815
+    },
+    {
+      "file": "src/companion/personal-learning.ts",
+      "sha256": "dd2f85d094a8e12c905fbe585c6a6a3e06da1be114567c40efaeb1e6cce5edcb",
+      "bytes": 14519
+    },
+    {
+      "file": "src/companion/personal-weights.ts",
+      "sha256": "658335eabf0b65119b8d954f16e84701fefc27866a63ca0b6dc34098ef39ee87",
+      "bytes": 23233
+    },
+    {
+      "file": "src/companion/presets.ts",
+      "sha256": "e6d12109e83611b77f3fc28f48f980e0f698061d0cc096f81f53982562183b26",
+      "bytes": 24181
+    },
+    {
+      "file": "src/companion/relationship-assessment.ts",
+      "sha256": "8bfc4bc15f396c30c8c1c183c828284e9876959e56afb3dcccca950e24c86fb1",
+      "bytes": 23786
+    },
+    {
+      "file": "src/companion/relationship-context.ts",
+      "sha256": "a0b931e28d6949b769e1c2669633b98882c7ec776a717c9bc75633134072332f",
+      "bytes": 7210
+    },
+    {
+      "file": "src/companion/relationship-evidence.ts",
+      "sha256": "637517adbc635dc6d0dfbe0d62204f484f850e299fc2c8fc561737db2aea1e0f",
+      "bytes": 17369
+    },
+    {
+      "file": "src/companion/store.ts",
+      "sha256": "402fd635ae29c95638106d5cb794379e16c318279bb290495f91b362e8addcb1",
+      "bytes": 49025
+    },
+    {
+      "file": "src/companion/time.ts",
+      "sha256": "b4f7220e87fd583b95444f054ff9937bc1a9c14b40767b8f2d054aec7a0920ac",
+      "bytes": 5500
+    },
+    {
+      "file": "src/companion/types.ts",
+      "sha256": "07a89e90491dcfce884e50b65757cee06b81e41ed760fce57b31201c04ae99e8",
+      "bytes": 4564
+    },
+    {
+      "file": "src/core/arithmetic.ts",
+      "sha256": "1ea43741b886a34570d83bbadb01a47e5c67da68e3eaf3a40298135179adbaf5",
+      "bytes": 17780
+    },
+    {
+      "file": "src/core/calculation-intent.ts",
+      "sha256": "581db4ecf54beff8bb0a7f1415bfc72ee0396770c3d45fbbac08cbed74bc2ab6",
+      "bytes": 1947
+    },
+    {
+      "file": "src/core/controls.ts",
+      "sha256": "89d2106f186a2ec2d2c523847437f1fe786d15569cb60aae72f80d3423f3cf56",
+      "bytes": 4169
+    },
+    {
+      "file": "src/core/memory-extraction.ts",
+      "sha256": "4837b25ce7c04d7ee4d6c836fb0de473decd2d37f0befd69c56838d29b94cfbf",
+      "bytes": 7615
+    },
+    {
+      "file": "src/core/models.ts",
+      "sha256": "dd4115276484f5787b3d37f25178ea2a333c862ea4ace96bb6e233f1998ec49d",
+      "bytes": 42998
+    },
+    {
+      "file": "src/core/service.ts",
+      "sha256": "adabeca4adbd3758a5d4bab082eccfb94c8023d606fca20c902433fb185d66f4",
+      "bytes": 10403
+    },
+    {
+      "file": "src/core/store.ts",
+      "sha256": "f5745b94c4c5f22821200b01b8d4bdac34dd2cba4c58ad390abf663cda9bae49",
+      "bytes": 19112
+    },
+    {
+      "file": "src/core/types.ts",
+      "sha256": "dccd5c60fa2430c179e6cbdb9977ca25dda09d4d69af8b368eff38536360544d",
+      "bytes": 6822
+    },
+    {
+      "file": "src/emotion/absence-explanation.ts",
+      "sha256": "315997bf5c9296458381c981e67c00dbb120c7f4ca38b92debde395a701a2327",
+      "bytes": 10996
+    },
+    {
+      "file": "src/emotion/address.ts",
+      "sha256": "1373917a3f1f1fab5b6c57a2ab30bb154acf3ba1293d4c067943ee043e7b00a3",
+      "bytes": 6608
+    },
+    {
+      "file": "src/emotion/contact-affect.ts",
+      "sha256": "70fbfec60b3dd4a11f6954f928fe04d7c065aaae2d0362a6942cef81cad035e4",
+      "bytes": 8188
+    },
+    {
+      "file": "src/emotion/neural.ts",
+      "sha256": "d916f7f50e5ac8f2d2648b96fdad0c10446493a78826e9f6c4ff0f291c6fdc77",
+      "bytes": 22146
+    },
+    {
+      "file": "src/emotion/openher.ts",
+      "sha256": "4266c6c6e079bb267aadea1c7bdfd59881f3d02d3f74ea12d29341b00702db08",
+      "bytes": 19559
+    },
+    {
+      "file": "src/emotion/relationships.ts",
+      "sha256": "d462faeb30e4e38e16b6e34c8c2b94df5bcd315ab470ec14e3180b42484b12f6",
+      "bytes": 12664
+    },
+    {
+      "file": "src/memory/access.ts",
+      "sha256": "c48c23db04929378e12a71d1feac002aa9e04fad4680556c680dd6c27bfc19c4",
+      "bytes": 8858
+    },
+    {
+      "file": "src/memory/context.ts",
+      "sha256": "a2cd6feea13cb0cf8c71702001cd6de786d300458f229a36d91f6f0328d73b6f",
+      "bytes": 3180
+    },
+    {
+      "file": "src/memory/retention.ts",
+      "sha256": "4e7ed30ed4f55fa598813e433709b1a58b27ad459d943d8d2d938bcf1678a520",
+      "bytes": 5015
+    },
+    {
+      "file": "src/memory/retrieval.ts",
+      "sha256": "d19ba6e2e0b0b4a080e4266ffaa6a42a44bfeea2e69c506f8e7b1a56edac9ea1",
+      "bytes": 26932
+    },
+    {
+      "file": "src/memory/tokenizer.ts",
+      "sha256": "f3666ad404193a533b59639a4e922930198ead8962e06782e2fcbe22b81289f4",
+      "bytes": 2662
+    },
+    {
+      "file": "src/memory/vector-forgetting.ts",
+      "sha256": "d3108b8618cf92d0b66570e23cf00f9080c6f203b045f9c8659918b669ed302a",
+      "bytes": 967
+    },
+    {
+      "file": "src/scene/address.ts",
+      "sha256": "f618cc386b67dfcb4a4b8296c297224309b6cbb596990dd3a3049983fe10fd72",
+      "bytes": 3399
+    },
+    {
+      "file": "src/scene/backup.ts",
+      "sha256": "bad4bbaa4ee2b6c4b7f184bbd5aae9fa067f81fb03f0798566b115f138c14418",
+      "bytes": 44902
+    },
+    {
+      "file": "src/scene/companion-flow.ts",
+      "sha256": "3d918fa15b74977c90dd017d9a7ab51f6da22e5ecfa9e85cae277742a7febe39",
+      "bytes": 34687
+    },
+    {
+      "file": "src/scene/dashboard.ts",
+      "sha256": "ca06e5192a11a0d7eed90f2c2fe4b9825beabc2fd353935abeaa1972dcec2816",
+      "bytes": 1160
+    },
+    {
+      "file": "src/scene/director.ts",
+      "sha256": "f4c6e4d3a7d951aacbbe1e590c489cd16eefa6a6777db75a4a16cc9fcd768e7b",
+      "bytes": 7071
+    },
+    {
+      "file": "src/scene/extraction.ts",
+      "sha256": "1506709d0c2273a8a354e5c58c3b78192ba31e5d5e10960279c69eaff53bd4b5",
+      "bytes": 9074
+    },
+    {
+      "file": "src/scene/geography-background.ts",
+      "sha256": "3a140fb4554e463e56a578020ef2bf6456c1597db553978320ebc032dfc87289",
+      "bytes": 4118
+    },
+    {
+      "file": "src/scene/geography.ts",
+      "sha256": "f429680f94355fbaf7526ef1d3e00e9cfc14a1be6aacc0402662d4911c2594ef",
+      "bytes": 67291
+    },
+    {
+      "file": "src/scene/identities.ts",
+      "sha256": "41ff1966a39d192f6add1e62e8d04d0cf3c0e6c6dc86566635d8051b871bf79f",
+      "bytes": 27307
+    },
+    {
+      "file": "src/scene/initialization.ts",
+      "sha256": "cba8f1283f35d34b3248c7a68ff6ab9fd79f544cd974b884533596feb4d9f3fe",
+      "bytes": 37870
+    },
+    {
+      "file": "src/scene/interaction.ts",
+      "sha256": "39f01876b022bc189a2282f2425e994e12b0d1f57f18e66a9cfd3b7e139a6835",
+      "bytes": 16411
+    },
+    {
+      "file": "src/scene/lifecycle.ts",
+      "sha256": "dbabbf61665a3e423f1c5d244f5427b77584de011521649b6876d6b974f95c99",
+      "bytes": 26330
+    },
+    {
+      "file": "src/scene/outward.ts",
+      "sha256": "ed4e2ff92ab7f5a096f143d150f8f8d8da81e81027401d996c263d2ff9eeade8",
+      "bytes": 5070
+    },
+    {
+      "file": "src/scene/perspective.ts",
+      "sha256": "386b732f1ea14505492e09a7422e9fd3a14663e567235abc77f22e513e7c2e17",
+      "bytes": 15636
+    },
+    {
+      "file": "src/scene/physiology.ts",
+      "sha256": "6a2db735b2845bd653e3226d90691b8a0e018b6ff2be1e7aa8c26880d290bb50",
+      "bytes": 31343
+    },
+    {
+      "file": "src/scene/processing.ts",
+      "sha256": "bbcd9058b26ede49b4fdc4ae17c62ea39af5a16a68d865ab7ee9683b42fb05cc",
+      "bytes": 11218
+    },
+    {
+      "file": "src/scene/resources.ts",
+      "sha256": "c3a796df033375847c6a472786c9d5e0374ab974210b255e7f65ce597db665de",
+      "bytes": 11914
+    },
+    {
+      "file": "src/scene/service.ts",
+      "sha256": "a9ea174167baeec3b31226e315dee149503e046ed49824c136c6fb46420ad0fa",
+      "bytes": 71612
+    },
+    {
+      "file": "src/scene/store.ts",
+      "sha256": "63034c35fbd927e971e8fbaedf49dd9e4e84b052f28847d61d9d86a8a6aa6013",
+      "bytes": 67477
+    },
+    {
+      "file": "src/scene/transfer.ts",
+      "sha256": "76fce9afab825223ce2629cc2056bfedb7781ee997052a2f8c759816251e11a5",
+      "bytes": 27725
+    },
+    {
+      "file": "src/scene/types.ts",
+      "sha256": "b6789c37d89261c08d24c7cb63967e980bbe194f644b4c0d62f08e5bf6298932",
+      "bytes": 5894
+    },
+    {
+      "file": "src/scene/views.ts",
+      "sha256": "fb6d94106f04ed88284f295b554a42742c023cda11b48801f31f2054cb4660b6",
+      "bytes": 12137
+    },
+    {
+      "file": "src/scene/workbench.ts",
+      "sha256": "df48ad2e7dd26b99d417123c4bccb74f658f03cdd2780cba049a008a25abc8fd",
+      "bytes": 7053
+    },
+    {
+      "file": "src/scene/world-state.ts",
+      "sha256": "0913ba25e3c76c9185337e301ed27805a38824db768e2a64daf47403c193f568",
+      "bytes": 39293
+    },
+    {
+      "file": "src/user-model/activity.ts",
+      "sha256": "21eacda47016ae6b2669866d32075185721b7985d34e222a09086a7ebc0af862",
+      "bytes": 6387
+    },
+    {
+      "file": "src/user-model/codec.ts",
+      "sha256": "cd1333224fca79d251b90fee738b5b594b58188c0b3cf8ac33666414c9fd2746",
+      "bytes": 14106
+    },
+    {
+      "file": "src/user-model/index.ts",
+      "sha256": "0c4d46985d1d8462877e68d059d54c2b9cdc3b46223901d4a143c970f0b80f35",
+      "bytes": 115
+    },
+    {
+      "file": "src/user-model/schema.ts",
+      "sha256": "b0d979aea9698942955770ce198704419147c5ac0b4d48be4ef696f76f9e773f",
+      "bytes": 6744
+    },
+    {
+      "file": "src/user-model/store.ts",
+      "sha256": "10d253c1f93e2e005b0c7887a670df48ca0534c8968f22e0e51dfd544b6ce442",
+      "bytes": 52108
+    },
+    {
+      "file": "src/user-model/types.ts",
+      "sha256": "c29d9d50e8d16f11df139cf32411b4140a861eed72e08d305d9a7ead937517cb",
+      "bytes": 5811
+    },
+    {
+      "file": "THIRD_PARTY_NOTICES.md",
+      "sha256": "9c51ed00e26720b73aa5c5be13b0c231d5e5c3aff268a8f5c53a262ca1f46374",
+      "bytes": 2056
+    },
+    {
+      "file": "third-party/agentjev/agentjev/model.py",
+      "sha256": "04a260fc3816f8a020db33981cd6dba3512e66ff18bd1e2958f4a84edeeb3452",
+      "bytes": 8531
+    },
+    {
+      "file": "third-party/agentjev/jev_service/contract.py",
+      "sha256": "2e1ad20aec548bea30417d017fa7a252fa4e336f91745d88944c5837db234c49",
+      "bytes": 5998
+    },
+    {
+      "file": "third-party/agentjev/jev_service/prefix.py",
+      "sha256": "83c68f5fcc1e37ca1cc5127a1211acb9085d298229deb000620f69d9998a8750",
+      "bytes": 3535
+    },
+    {
+      "file": "third-party/agentjev/LICENSE",
+      "sha256": "23b959c1487827616d071b8c4b0c6cfd97f23046664da0ae9293eef769785bda",
+      "bytes": 10345
+    },
+    {
+      "file": "third-party/agentjev/runner.py",
+      "sha256": "a226e9034d7cd3ea82af039b902660385d870b93a877cf1274dee078cc141eaf",
+      "bytes": 7427
+    },
+    {
+      "file": "third-party/OpenHer-LICENSE",
+      "sha256": "dcdec9554860824b4289f8ae20218e75b9c3f4526e58e4ed485a8f20b2039ab8",
+      "bytes": 5059
+    },
+    {
+      "file": "tools/agent-assets.json",
+      "sha256": "425f8435197c570e9584f9d64cb807f607a53e4413d46443c0c66bfc03a8fc25",
+      "bytes": 2241
+    },
+    {
+      "file": "tools/backup.mjs",
+      "sha256": "fc5157fd22097461c325f388de2d9ee28ab22da6a245647d8697da0afaa65a3a",
+      "bytes": 1441
+    },
+    {
+      "file": "tools/install-agent-model.ps1",
+      "sha256": "3051bbb69e57ebc33f7fcfc6c0692236581b323bb774c62009929fdd967ad2d1",
+      "bytes": 3451
+    },
+    {
+      "file": "tools/install-check.mjs",
+      "sha256": "464a4c52f7e1b600b4e63146555b192bc3e82f159766860d44b49e5f51955b9f",
+      "bytes": 4726
+    },
+    {
+      "file": "tools/install.ps1",
+      "sha256": "5d3f2c1675075484cbc57ed648c7d0eef57365c2f9f564fd82a565ffdcd83e8c",
+      "bytes": 7482
+    },
+    {
+      "file": "tools/setup.ps1",
+      "sha256": "e2fe01d1bc4045962f763d617ece7e347709fdda08d888628830f72cdf792ace",
+      "bytes": 441
+    },
+    {
+      "file": "tsconfig.json",
+      "sha256": "3c7968b0f8a44d911d68fe9b87ab2f6f2b291268dcf5cfabb182aeadc931c02f",
+      "bytes": 305
+    }
+  ]
+}

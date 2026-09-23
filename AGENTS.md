@@ -1,3 +1,8 @@
-# XLDB installed package
+# XLDB Agent 产品入口
 
-When asked to install or configure this package, follow INSTALL_AGENT.md. Use powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools/setup.ps1 -Mode Agent for Agent installation; do not start SillyTavern or request model API keys for Agent mode. After installation use .agents/skills/xldb-agent/SKILL.md for authorized XLDB interactions. Preserve existing data and private configuration. Installation alone does not prove native subagent capability.
+先读取 INSTALL_AGENT.md，执行本地安装，再读取 .agents/skills/xldb-agent/SKILL.md。
+安装后首先要求用户在当前工作区新建 `.local/agent/retrieval-api.txt`，按模板填写 embedding 和 reranker 的 API 地址、密钥及模型名。已有配置则复用；不要让用户在聊天中发送密钥，也不要读取密钥并转述给子代理。
+
+伴侣与跑团/角色扮演使用隔离的作用域。导演及其他文本推理由宿主自己的独立子代理完成，无需正文模型 API。使用技能内的文件任务循环，不把内部提示或角色不知道的事实带给前台角色。
+
+用户数据、模型、依赖和缓存仅放入本安装目录 `.local/`；更新程序保留该目录。不要自动修改系统全局设置。

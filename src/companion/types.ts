@@ -35,6 +35,17 @@ export interface ContactOccurrence {
   settingsRevision:number;
 }
 
+/** A single currently active soft no-contact promise and its current window. */
+export interface QuietExceptionBinding {
+  scopeKey:string;
+  commitmentId:string;
+  revision:number;
+  key:string;
+  sourceId:string;
+  sourceRevision:number;
+}
+export type QuietExceptionStatus='available'|'reserved'|'consumed';
+
 export interface CompanionBasis {kind:'source'|'profile'|'schedule'|'daily';id:string;revision:number}
 export interface CompanionOpportunity {
   opportunityId:string;
@@ -103,6 +114,17 @@ export interface CompanionDelivery {
   updatedAtMs:number;
 }
 export interface DeliveryClaim {delivery:CompanionDelivery;claimToken:string;claimUntilMs:number}
+export interface ConfirmedContactDelivery {
+  deliveryId:string;
+  subjectId:string;
+  targetId:string;
+  body:string;
+  hostMessageId:string;
+  confirmedSentAtMs:number;
+  /** False when confirmation happened after an unknown delivery outcome. */
+  replyTimingKnown:boolean;
+  quietException:boolean;
+}
 export interface CompanionActivity {
   subjectId:string;
   revision:number;
