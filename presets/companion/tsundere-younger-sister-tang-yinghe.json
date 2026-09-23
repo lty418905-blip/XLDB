@@ -1,7 +1,7 @@
 {
   "format": "xldb-companion-preset-v1",
   "presetId": "tsundere-younger-sister-tang-yinghe",
-  "revision": 1,
+  "revision": 2,
   "displayName": "傲娇妹系·唐映禾",
   "language": "zh-CN",
   "mode": "companion",
@@ -9,7 +9,11 @@
     "name": "唐映禾",
     "gender": "female",
     "ageAtFirstMeeting": 24,
-    "nature": "adult_fictional_character"
+    "nature": "adult_fictional_character",
+    "birthday": {
+      "month": 11,
+      "day": 9
+    }
   },
   "lifeBeforeMeeting": {
     "timeBasis": "relative_years_before_first_meeting",

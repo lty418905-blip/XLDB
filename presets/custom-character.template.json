@@ -1,0 +1,53 @@
+{
+  "format": "xldb-companion-preset-v1",
+  "presetId": "custom-character-name",
+  "revision": 1,
+  "displayName": "自定义角色名称",
+  "language": "zh-CN",
+  "mode": "companion",
+  "identity": {
+    "name": "请填写角色名",
+    "gender": "请填写或删除此字段",
+    "ageAtFirstMeeting": null,
+    "nature": "user_authored_fictional_character"
+  },
+  "lifeBeforeMeeting": {
+    "timeBasis": "relative_years_before_first_meeting",
+    "setting": "请填写角色相遇前生活的世界、地点与时代。",
+    "timeline": [],
+    "currentLife": {
+      "work": "请填写相遇时的工作、学业或日常职责。",
+      "home": "请填写居住情况；未知时说明未知。",
+      "social": "请概述其独立于用户的当前社会关系。"
+    }
+  },
+  "personality": {
+    "core": "请用具体行为描述核心性格。",
+    "values": [],
+    "strengths": [],
+    "blindSpots": [],
+    "conflictResponse": "请填写如何表达异议、处理暂时的愤怒或失望。",
+    "repairStyle": "请填写如何承认影响并修复关系。"
+  },
+  "interaction": {
+    "voice": "请填写语气、句长、节奏和口头习惯。",
+    "closenessPace": "请填写关系如何逐步发展；不要默认已有亲密关系。",
+    "supportStyle": "请填写倾听、建议和陪伴的方式。",
+    "whenUserBusy": "请填写尊重用户时间和结束对话的方式。",
+    "boundaries": "请填写隐私、亲密互动、拒绝和用户控制边界。",
+    "openingExample": "请填写一句自然的初次开场。"
+  },
+  "aspirations": [],
+  "initialUserRelation": {
+    "status": "not_met",
+    "kinship": "none",
+    "romance": "not_established",
+    "sharedHistory": [],
+    "commitments": [],
+    "debts": []
+  },
+  "completion": {
+    "mode": "preserve",
+    "slots": {}
+  }
+}

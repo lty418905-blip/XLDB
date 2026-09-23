@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>选择伴侣角色 · XLDB</title><link rel="stylesheet" href="onboarding.css"></head><body>
+<dialog id="dialog" aria-labelledby="title"><div class="head"><h1 id="title">选择你的伴侣角色</h1><p>开始前选一位内置角色，或导入自己准备的角色 JSON。确认后才会保存到当前会话。</p></div>
+<main><section id="chooser"><h2>内置角色</h2><div class="cards" id="cards"></div>
+  <label class="custom"><input type="radio" name="source" value="custom"> <strong>导入我的角色</strong><span>选择本机的 .json 文件。可以让其他 AI 参考下方指南与模板帮你创建。</span>
+    <input id="customFile" type="file" accept=".json,application/json" aria-label="选择角色 JSON 文件"></label>
+  <div class="guides"><strong>创建自己的角色</strong><div>创作指南 <a href="documents/guide" target="_blank" rel="noopener">查看</a></div><code id="guide"></code><div>填写说明 <a href="documents/markdown-template" target="_blank" rel="noopener">查看</a></div><code id="markdownTemplate"></code><div>JSON 导入模板 <a href="documents/json-template" download="custom-character.template.json">下载</a></div><code id="jsonTemplate"></code><span>可把创作指南和填写说明的内容复制或上传给其他 AI，让它生成 JSON，再回到这里导入。</span></div>
+  <p id="feedback" class="feedback" role="status" aria-live="polite">请选择一个角色，然后点击“预览”。</p><div id="review" class="review" hidden></div></section>
+  <section id="done" role="status"><h2>已完成</h2><p id="doneText"></p><p>现在可以关闭此窗口，回到 Agent 继续。</p></section></main>
+<footer id="actions"><button class="secondary" id="cancel" type="button">取消</button><button class="secondary" id="preview" type="button">预览</button><button class="primary" id="confirm" type="button" disabled>确认并启用</button></footer></dialog>
+<script type="module" src="onboarding.js"></script></body></html>

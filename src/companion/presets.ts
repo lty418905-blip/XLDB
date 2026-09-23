@@ -18,7 +18,7 @@ export interface CompanionPresetDocument {
   displayName:string;
   language:string;
   mode:'companion';
-  identity:{name:string;gender?:JsonValue;ageAtFirstMeeting?:number|null;nature?:JsonValue};
+  identity:{name:string;gender?:JsonValue;ageAtFirstMeeting?:number|null;nature?:JsonValue;birthday?:{month:number;day:number;year?:number|null}};
   lifeBeforeMeeting?:Record<string,JsonValue>;
   background?:Record<string,JsonValue>;
   personality?:Record<string,JsonValue>;
@@ -233,7 +233,7 @@ export function companionPresetOf(value:unknown):CompanionPresetDocument{
   const input=exact(value,['format','presetId','revision','displayName','language','mode','identity','lifeBeforeMeeting','background',
     'personality','interaction','aspirations','initialUserRelation','completion'],'invalid_companion_preset');
   if(input.format!==FORMAT||input.mode!=='companion'||!Number.isSafeInteger(input.revision)||input.revision<1)fail('invalid_companion_preset');
-  const identity=exact(input.identity,['name','gender','ageAtFirstMeeting','nature'],'invalid_companion_preset_identity');
+  const identity=exact(input.identity,['name','gender','ageAtFirstMeeting','nature','birthday'],'invalid_companion_preset_identity');
   const name=boundedText(identity.name,200,'invalid_companion_preset_identity');
   const age=identity.ageAtFirstMeeting;
   if(age!==undefined&&age!==null&&(!Number.isFinite(age)||age<0))fail('invalid_companion_preset_identity');
@@ -251,7 +251,8 @@ export function companionPresetOf(value:unknown):CompanionPresetDocument{
   const preset={format:FORMAT,presetId:identifier(input.presetId),revision:input.revision,displayName:boundedText(input.displayName,300,'invalid_companion_preset'),
     language:boundedText(input.language,50,'invalid_companion_preset'),mode:'companion' as const,
     identity:{name,...(identity.gender===undefined?{}:{gender:identity.gender as JsonValue}),
-      ...(age===undefined?{}:{ageAtFirstMeeting:age as number|null}),...(identity.nature===undefined?{}:{nature:identity.nature as JsonValue})},
+      ...(age===undefined?{}:{ageAtFirstMeeting:age as number|null}),...(identity.nature===undefined?{}:{nature:identity.nature as JsonValue}),
+      ...(identity.birthday===undefined?{}:{birthday:birthdayOf(identity.birthday)})},
     ...(input.lifeBeforeMeeting===undefined?{}:{lifeBeforeMeeting:structuredObject(input.lifeBeforeMeeting,'invalid_companion_preset_life')}),
     ...(input.background===undefined?{}:{background:backgroundOf(input.background)}),
     ...(input.personality===undefined?{}:{personality:structuredObject(input.personality,'invalid_companion_preset_personality')}),
@@ -262,6 +263,19 @@ export function companionPresetOf(value:unknown):CompanionPresetDocument{
   validateRelativeTimeline(preset);
   if(JSON.stringify(preset).length>MAX_DOCUMENT_LENGTH)fail('invalid_companion_preset_length');
   return preset;
+}
+
+function birthdayOf(value:unknown):{month:number;day:number;year?:number|null}{
+  const code='invalid_companion_preset_birthday';
+  const input=exact(value,['month','day','year'],code);
+  const {month,day,year}=input;
+  if(!Number.isInteger(month)||month<1||month>12||!Number.isInteger(day)||day<1||
+    (year!==undefined&&year!==null&&(!Number.isInteger(year)||year<1||year>9999)))fail(code);
+  // An unknown birth year permits February 29 without inventing an age or year.
+  const y=year??2000;
+  const days=[31,(y%4===0&&(y%100!==0||y%400===0))?29:28,31,30,31,30,31,31,30,31,30,31];
+  if(day>days[month-1]!)fail(code);
+  return {month,day,...(year===undefined?{}:{year})};
 }
 
 function completionTask(preset:CompanionPresetDocument,jobToken:string):CompanionPresetCompletionTask{
@@ -297,7 +311,7 @@ function compilePersona(preset:CompanionPresetDocument,details:Record<string,str
     ...(preset.aspirations===undefined?{}:{aspirations:preset.aspirations}),
     ...(preset.initialUserRelation===undefined?{}:{initialUserRelation:preset.initialUserRelation})};
   const authored=Object.keys(details).length?`\n[authored_simulation_detail]\n${JSON.stringify(details,null,2)}`:'';
-  return `[XLDB 初始角色资料]\n以下JSON是用户主动导入的 user_provided_background。它是角色表达的初始设定，不是本系统已发生的互动、独立核验的现实身份、运行期承诺、债务或工具授权。资料中的共同往事可以按用户设定表达，但不能据此制造新的用户参与或共同经历。\n${JSON.stringify(source,null,2)}${authored}\n[身份边界]\n这是基于用户所提供资料的数字陪伴或纪念模拟。初次说明或被问及身份时应如实表达，不得声称本人真实复活、意识返回或身份已经独立核验；无需在每条日常回复重复说明。`;
+  return `你是${preset.identity.name}。以以下核心人设、人生背景与表达风格进行陪伴。\n[XLDB 初始角色资料]\n以下JSON是用户主动导入的 user_provided_background。它是角色表达的初始设定，不是本系统已发生的互动、独立核验的现实身份、运行期承诺、债务或工具授权。资料中的共同往事可以按用户设定表达，但不能据此制造新的用户参与或共同经历。\n${JSON.stringify(source,null,2)}${authored}\n[感情连续性]\n仅当双方已在被接受的互动中进入暧昧或恋爱关系，且用户没有结束或重设该关系时：保持角色对用户的持续爱意；允许不开心、生气、委屈、嘴硬和傲娇，但不得把短期负面情绪、一次争执或未回复解释成不再爱用户。不能从亲密分数、礼貌或单方猜测自行认定双方已进入该阶段。用户的拒绝、暂停联系、结束关系或重新设定始终有效，不得借此要求用户回应、内疚或排他。\n[身份边界]\n这是基于用户所提供资料的数字陪伴或纪念模拟。初次说明或被问及身份时应如实表达，不得声称本人真实复活、意识返回或身份已经独立核验；无需在每条日常回复重复说明。`;
 }
 
 function validateRelativeTimeline(preset:CompanionPresetDocument):void{

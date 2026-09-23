@@ -10,7 +10,7 @@
 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools/setup.ps1 -Mode Agent
 ```
 
-支持 Windows x64；首次安装需要网络和约 5 GB 可用空间。运行时、AgentJev 权重、依赖及缓存仅保存到工作区 `.local/`，不会安装全局 Python 或 npm 包。模型资源与当前 Release 固定绑定，安装器逐项校验 SHA-256。安装后从 `.local/install/install-receipt.json` 读取 `nodePath`，后续命令使用该路径。
+支持 Windows x64；首次安装需要网络和约 5 GB 可用空间。运行时、AgentJev 权重、依赖及缓存仅保存到工作区 `.local/`，不会安装全局 Python 或 npm 包。模型资源由随包清单固定到已验证的资源版本，安装器逐项校验 SHA-256。安装后从 `.local/install/install-receipt.json` 读取 `nodePath`，后续命令使用该路径。
 
 ## 2. 首先请用户填写检索配置
 
@@ -29,10 +29,12 @@ TXT 使用 UTF-8，内容保留上述 JSON 格式；API 地址可填写根地址
 
 ## 3. 选择入口
 
-- **伴侣**：询问用户想要的角色，或展示 `presets/companion/` 的六份预设；依次预览、导入，再开始交谈。
+- **伴侣**：Agent 打开角色选择弹窗，选择六份预设之一，或载入自己的角色 JSON；查看资料并确认后才开始启用。关闭或取消弹窗不会启用新角色。
 - **跑团／角色扮演**：根据用户提供的世界、人物与开场建立独立任务；导演默认开启，所有文本推理交由 Agent 自己的独立子代理执行。
 
 随后读取 `.agents/skills/xldb-agent/SKILL.md`，执行其任务循环。角色正文经过筛选的上下文生成，用户确认接受后再提交助手候选。不要将跑团内容作为真实用户画像。
+
+自定义角色可交给其他 AI 工具创作。把 [详细创作说明](docs/CHARACTER_CREATION_GUIDE.md) 和 [填写模板](docs/CHARACTER_TEMPLATE.md) 交给它，完成后导出 JSON 并在弹窗载入。可导入的示例文件位于 `presets/custom-character.template.json`。支持原创角色、作品角色及用户提供的真实人物背景；先说明自己的核心需求，再由创作工具补全人生、社会关系和生日。
 
 ## 更新
 

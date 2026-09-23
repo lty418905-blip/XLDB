@@ -1,12 +1,12 @@
 {
   "format": 1,
   "kind": "xldb-agent",
-  "version": "0.1.0-mvp",
+  "version": "0.1.1-mvp",
   "files": [
     {
       "file": ".agents/skills/xldb-agent/SKILL.md",
-      "sha256": "830260a647721e30a97ac87b8efd51cd83d64193d3b55149c88303d4b9bf0b68",
-      "bytes": 8653
+      "sha256": "3296c3f11ca48601b29fbca5d6a8cea1f2b124d5162361d70eb8b9a189e29529",
+      "bytes": 9127
     },
     {
       "file": ".gitattributes",
@@ -20,8 +20,28 @@
     },
     {
       "file": "adapters/agent/cli.mjs",
-      "sha256": "727c445fe9221dd54360f34bc56f2447443c0437c2e521cd9afa3af9633d973b",
-      "bytes": 12167
+      "sha256": "12b09cced11058309b7cb6eb9138cced00b4a3c669397a650465147ab67edd45",
+      "bytes": 14221
+    },
+    {
+      "file": "adapters/agent/onboarding.css",
+      "sha256": "7df70d8990c753bbb13319c9489cd6a2021cdf795434a8543171dc79ac3843a2",
+      "bytes": 2461
+    },
+    {
+      "file": "adapters/agent/onboarding.html",
+      "sha256": "1fba8ba2782b21cf9c6f57c6f120c8bad3997fa580ed3a685ced99106d6fcd42",
+      "bytes": 2132
+    },
+    {
+      "file": "adapters/agent/onboarding.js",
+      "sha256": "880c0f52872f0a06f55b0ba28380f2642b0915ef1cac17c9519a6cf451f0ab15",
+      "bytes": 7495
+    },
+    {
+      "file": "adapters/agent/onboarding.mjs",
+      "sha256": "8394160b57e681bb6ef33e55795efd8d7d7a4a28d4155c0477b0b608964b1e51",
+      "bytes": 9479
     },
     {
       "file": "adapters/agent/retrieval-config.mjs",
@@ -35,13 +55,23 @@
     },
     {
       "file": "docs/AGENT.md",
-      "sha256": "89f154b0c96679ef24d4f280487e0010870b534c3a9ba9eab21a19172936d28d",
-      "bytes": 5772
+      "sha256": "3a86a772caa4c6fa9ea44e5d85f7963a7558f405dd30ce6197d401f4306c6188",
+      "bytes": 6328
     },
     {
       "file": "docs/ARITHMETIC.md",
       "sha256": "93c10a3814025d89e91fb7182bd15f5b8a259d203433d9a1d29791cb25e08dc6",
       "bytes": 4298
+    },
+    {
+      "file": "docs/CHARACTER_CREATION_GUIDE.md",
+      "sha256": "4558ad09eadf58e18885d560eae0ff94a4ec93e139e1582c4f384d0d471ad8c8",
+      "bytes": 25093
+    },
+    {
+      "file": "docs/CHARACTER_TEMPLATE.md",
+      "sha256": "dbc2bad1b96dc0c1a69ed39d5297e09cbf72ede390e8269abf3dbac1b3524fe8",
+      "bytes": 7089
     },
     {
       "file": "docs/OPENHER_ADOPTION.md",
@@ -60,8 +90,8 @@
     },
     {
       "file": "INSTALL_AGENT.md",
-      "sha256": "49a5191d79ff08ba0f07e3baa006ba9df025d442facc691927e72763e59bc11a",
-      "bytes": 2227
+      "sha256": "a58197643c6383f56439674faac78fa9a7c475f6b39fa522c5d2561194e442ea",
+      "bytes": 2750
     },
     {
       "file": "LICENSE.md",
@@ -70,43 +100,48 @@
     },
     {
       "file": "package.json",
-      "sha256": "ba501a814ed8463db0faad97e2a92e2064608ec05adb100500c0d9f2256e063c",
-      "bytes": 274
+      "sha256": "62e6da039876cb67c4a1b04fe3c2d41c1beacfdc69800243806708ba5438c79a",
+      "bytes": 290
     },
     {
       "file": "presets/companion/affectionate-younger-brother-lu-tinglan.json",
-      "sha256": "054964832669fecf229ddc539ae00753ae69aabc024a3047e99570e101537cbd",
-      "bytes": 4974
+      "sha256": "8efcbf6bda46d728f4370aae697e919192ac81ccec44563fc79d6a1d89d4c240",
+      "bytes": 5033
     },
     {
       "file": "presets/companion/decisive-executive-cheng-yanzhou.json",
-      "sha256": "b564b21235760a65e6502af1bfe6a4d76d998256be0601976f8577aa258f46a5",
-      "bytes": 4817
-    },
-    {
-      "file": "presets/companion/energetic-young-woman-xia-mingcheng.json",
-      "sha256": "ee24900774c8a86235076c18f637c4945972ef5483c74042c8b3ef57aff62e23",
+      "sha256": "c6a05cc3d7f840960fa1729aaa73922fffb8b59d0a86f0746041c65c556af1ec",
       "bytes": 4876
     },
     {
+      "file": "presets/companion/energetic-young-woman-xia-mingcheng.json",
+      "sha256": "bd7dc2f8474af011ba1b6dc0c8376ca1dfd36b6ffa04417b22bf97570209bf5a",
+      "bytes": 4935
+    },
+    {
       "file": "presets/companion/gentle-older-sister-shen-zhiwei.json",
-      "sha256": "dfc089a249efcf08b62c328d6e9518c7ba6f0981ca936bba18e6ce3fcb512d55",
-      "bytes": 4968
+      "sha256": "147ace3989cab413bb2b2485e7c0ad60640230a11882d6caab6b24ecf7352c39",
+      "bytes": 5027
     },
     {
       "file": "presets/companion/reserved-older-brother-gu-chen.json",
-      "sha256": "be4030fe01b8123c24843799f361ef21cc9e319ed103ae8961ce032596e1cfa1",
-      "bytes": 4793
+      "sha256": "bff172e809cc2a17dc70fa42fa86d5a265d85030d4fc65de74ec54f824bd1705",
+      "bytes": 4852
     },
     {
       "file": "presets/companion/tsundere-younger-sister-tang-yinghe.json",
-      "sha256": "93d30ce2bc630b915e0062f182e36472f4ea8c3b4b4e92767aa3ac2583f67791",
-      "bytes": 4834
+      "sha256": "516b46ed3fadb82755f5cda2a445593816eef67ca77b1d6f37d937011bd70325",
+      "bytes": 4893
+    },
+    {
+      "file": "presets/custom-character.template.json",
+      "sha256": "c88ace6d74b1cb544b0a35b8241fd218a7bfe00ec9992603a8f30b5bd5a6b356",
+      "bytes": 1830
     },
     {
       "file": "README.md",
-      "sha256": "8b01f7bac3a08e3976c39f1ddb50dd80482fb1a81e902829ffb2e258b4066a00",
-      "bytes": 2128
+      "sha256": "13afe104f888bf757ec4b2c60fe956b97f2e4b0088afee4022a3c422ec7c2499",
+      "bytes": 2134
     },
     {
       "file": "src/agent/file-host.ts",
@@ -200,8 +235,8 @@
     },
     {
       "file": "src/companion/presets.ts",
-      "sha256": "e6d12109e83611b77f3fc28f48f980e0f698061d0cc096f81f53982562183b26",
-      "bytes": 24181
+      "sha256": "a0ce6b01c79b07b10f052c135999d2add406709f383ca9e9561505e6b2dea938",
+      "bytes": 25633
     },
     {
       "file": "src/companion/relationship-assessment.ts",

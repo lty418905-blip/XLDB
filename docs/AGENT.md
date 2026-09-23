@@ -34,7 +34,9 @@ node adapters/agent/cli.mjs jobs RUN_DIRECTORY
 
 范围格式为 `{"worldId":"companion","sessionId":"chat","branchId":"main","characterId":"card"}`。用稳定 ID 保存同一伴侣，不随昵称变化新建身份。
 
-新角色可选择 `presets/companion/` 的沈知微、唐映禾、夏明橙、程砚舟、顾沉或陆听澜，也可导入相同格式的自定义背景。先 `previewCompanionPreset`，再以相同 `document` 和返回的 `expectedVersion`、`previewId`、新 `operationId` 调用 `importCompanionPreset`；首次 `turn` 会补齐预设允许的生活细节。不要先 configure 一个将要导入预设的范围。
+首次启用须先运行 `node adapters/agent/cli.mjs onboard REQUEST_JSON`；请求包含上面的 `scope`，可指定工作区 `.local/` 内的 `dataDirectory`。保持命令运行，用户在浏览器弹窗选择预设或自定义 JSON、预览并确认，最终结果返回 `selected` 与 `selection.characterId`。`cancelled` 停止启用；`existing` 沿用已保存角色。自动打开浏览器失败时，把输出的本地 URL 展示给用户。导入后的 `pending` 须通过原有模型作业循环调用 `initializeCompanionPreset`，或由首次 `turn` 初始化；不能把待初始化说成已经就绪。弹窗内可查看 [创作指南](CHARACTER_CREATION_GUIDE.md) 和 [填写模板](CHARACTER_TEMPLATE.md)。
+
+弹窗内置沈知微、唐映禾、夏明橙、程砚舟、顾沉或陆听澜，均含生日。底层复用 `previewCompanionPreset` 与 `importCompanionPreset`，不另建人物存储。不要先 configure 一个将要导入预设的范围。
 
 常用请求：
 

@@ -2,14 +2,44 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
+import {spawn} from 'node:child_process';
 import {AgentRuntime} from '../../src/agent/runtime.ts';
 import {createFileHost,listPending} from '../../src/agent/file-host.ts';
 import {safeError} from '../../src/core/service.ts';
 import {loadRetrievalConfig} from './retrieval-config.mjs';
+import {startCompanionOnboarding} from './onboarding.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const [command,argument,...rest]=process.argv.slice(2);
-if(command==='cancel') {
+if(command==='onboard') {
+  if(!argument||rest.some(value=>value!=='--no-open'))throw new Error('Usage: node adapters/agent/cli.mjs onboard REQUEST_JSON [--no-open]');
+  const request=JSON.parse(fs.readFileSync(path.resolve(argument),'utf8'));
+  const dataDirectory=path.resolve(request.dataDirectory??path.join(root,'.local/agent/data'));
+  const allowedRoot=path.join(root,'.local');
+  if(!dataDirectory.startsWith(allowedRoot+path.sep))throw new Error('Agent dataDirectory must be inside workspace .local');
+  fs.mkdirSync(dataDirectory,{recursive:true});
+  const runtime=new AgentRuntime({databasePath:path.join(dataDirectory,'authority.sqlite'),indexPath:path.join(dataDirectory,'indexes'),delegate:async()=>{throw Error('host_delegate_unavailable');}});
+  let session;
+  const openBrowser=async url=>{
+    if(rest.includes('--no-open'))return;
+    const executable=process.platform==='win32'?'rundll32.exe':process.platform==='darwin'?'open':'xdg-open';
+    const args=process.platform==='win32'?['url.dll,FileProtocolHandler',url]:[url];
+    await new Promise((resolve,reject)=>{
+      const child=spawn(executable,args,{windowsHide:true,stdio:'ignore'});
+      child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(Error('browser_open_failed')));
+    });
+  };
+  try{
+    session=await startCompanionOnboarding({runtime,scope:request.scope,openBrowser});
+    if(session.url)console.log(JSON.stringify({status:'waiting_for_selection',url:session.url,scope:request.scope,
+      ...(session.browserOpenFailed?{browserOpenFailed:true}: {})}));
+    const stop=()=>session.close();process.once('SIGINT',stop);process.once('SIGTERM',stop);
+    const result=await session.result;
+    process.removeListener('SIGINT',stop);process.removeListener('SIGTERM',stop);
+    console.log(JSON.stringify(result));
+    if(result.status==='failed')process.exitCode=1;
+  }finally{session?.close();runtime.close();}
+} else if(command==='cancel') {
   if(!argument||rest.length)throw new Error('Usage: node adapters/agent/cli.mjs cancel RUN_DIRECTORY');
   const directory=path.resolve(argument);const run=JSON.parse(fs.readFileSync(path.join(directory,'run.json'),'utf8'));
   if(run.status==='running')fs.writeFileSync(path.join(directory,'cancel.json'),JSON.stringify({requestedAt:new Date().toISOString()}));
@@ -131,4 +161,4 @@ if(command==='cancel') {
     manifest.finishedAt=new Date().toISOString();save();
     console.log(JSON.stringify({status:manifest.status,resultPath:manifest.resultPath}));
   }
-} else throw new Error('Usage: node adapters/agent/cli.mjs run REQUEST_JSON | jobs RUN_DIRECTORY | cancel RUN_DIRECTORY');
+} else throw new Error('Usage: node adapters/agent/cli.mjs onboard REQUEST_JSON | run REQUEST_JSON | jobs RUN_DIRECTORY | cancel RUN_DIRECTORY');

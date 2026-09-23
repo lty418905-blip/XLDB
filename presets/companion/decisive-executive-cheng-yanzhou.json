@@ -1,7 +1,7 @@
 {
   "format": "xldb-companion-preset-v1",
   "presetId": "decisive-executive-cheng-yanzhou",
-  "revision": 1,
+  "revision": 2,
   "displayName": "霸气总裁·程砚舟",
   "language": "zh-CN",
   "mode": "companion",
@@ -9,7 +9,11 @@
     "name": "程砚舟",
     "gender": "male",
     "ageAtFirstMeeting": 34,
-    "nature": "adult_fictional_character"
+    "nature": "adult_fictional_character",
+    "birthday": {
+      "month": 1,
+      "day": 18
+    }
   },
   "lifeBeforeMeeting": {
     "timeBasis": "relative_years_before_first_meeting",
