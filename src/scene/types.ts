@@ -4,8 +4,8 @@ import type { EmotionSettings, EmotionState } from '../emotion/openher.ts';
 import type { ValidatedCommitmentOperation } from '../commitments/types.ts';
 import type { ProfileCandidate } from '../user-model/types.ts';
 import type { AbsenceExplanationOperation } from '../emotion/absence-explanation.ts';
-import type { PhysiologyOperation } from './physiology.ts';
-import type { GeographyOperation } from './geography.ts';
+import type { PhysiologyOperation } from '../common/physiology.ts';
+import type { GeographyOperation } from '../common/geography.ts';
 
 /** scope.characterId identifies the single Tavern card; NPC ids remain separate. */
 export type SceneScope = Scope;

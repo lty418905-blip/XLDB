@@ -54,6 +54,16 @@ node adapters/agent/cli.mjs jobs RUN_DIRECTORY
 
 `bindSubject` 绑定真实用户 ID；`profile` 查看习惯、偏好和心理侧写；`profileControls` 设置学习、应用和主动性；`profileCorrect`/`profileDelete` 纠正或删除。`relationshipAssessment` 查看双向关系建议，`relationshipCorrect` 纠正。主动联系通过 `contactSettings`、`companionPoll`、`companionClaim`、实际宿主投递及 `companionReceipt` 完成；投递成功前不得记作已发送。所有用户控制按返回的 revision 更新。
 
+## 伴侣地图与位置选择
+
+首次人设弹窗提供“允许定位”和“不用定位”。点击允许才请求浏览器位置，角色确认后才保存本次观测；取消不保存。拒绝、不支持或定位失败不会阻止角色启用，但关闭伴侣地图，不通过 IP 推测位置。以后启动不自动重新定位。
+
+地图与生理状态为两入口共用模块。`geographyStatus` 读取当前范围的定位选择、地图设置和读者投影，`readerId` 默认 player；`physiologyStatus` 读取虚拟角色生理状态。生理功能尊重配置，不因伴侣模式强制关闭某类状态。地图支持预览导入、纠正、背景整理、导出与布局，文档格式见 [地图说明](MAP.md)。当前为示意地图，尚未内置现实底图。
+
+当本轮需要地点公开资料时，宿主在 `turn` 或 `recall` 请求加入 `placeQuery`，值为本轮 `input` 或 `query` 明确出现的地点名称。宿主依技能为 `placeLookup` 作业执行联网搜索，传回来源与摘要；结果仅用于本轮回答，不写入位置或经历。拒绝定位后仍可使用这条后台查询路径，不再次询问定位，也不自动推断用户所在地。
+
+地图写操作字段：`configureGeography` 使用 config、expectedRevision、operationId；`previewGeographyImport` 使用 document，随后 `importGeography` 使用同一 document、预览返回的 expectedVersion 与 documentHash，以及新的 operationId；`correctGeography` 使用 correction、expectedVersion、operationId；`clearGeographyCorrection` 使用 id、expectedVersion、operationId；`saveGeographyLayout` 使用 readerId、layout、expectedRevision、operationId。`previewGeographyBackground` 使用 input；只有用户确认预览后才调用 importGeography。`exportGeography` 使用 readerId。定位拒绝不能通过修改地图设置撤销。
+
 ## 跑团与角色扮演
 
 按用户给出的世界、人物和开场补齐必要资料，先创建任务：

@@ -9,4 +9,5 @@ input[type=file]{display:block;width:100%;margin:8px 0}button{font:inherit;borde
 .feedback{margin:14px 0;border-radius:9px;padding:12px;background:#f0f4f9;line-height:1.5;white-space:pre-wrap}.feedback.error{background:#fff0ef;color:#9a241b}.feedback.good{background:#e9f7ee;color:#1d6336}
 .review{border:1px solid #bdd1ec;background:#f8fbff;border-radius:10px;padding:15px;margin:12px 0;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}.review h2{margin-bottom:5px}
 .review pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.85rem}.review summary{cursor:pointer;color:#1558af;margin-top:12px}
+.location-choice{margin:18px 0 12px;padding:16px;border:1px solid #c8d2df;border-radius:12px;background:#fff}.location-choice h2{margin-bottom:8px}.location-choice p{margin:8px 0;line-height:1.55;color:#43536a}.location-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:12px}.location-actions button.selected{border-color:#1558af;background:#eef5ff;color:#153f77}.location-status{font-size:.9rem}
 footer{display:flex;justify-content:flex-end;gap:10px;padding:16px 28px;border-top:1px solid #d9e1eb;background:white}#done{display:none}

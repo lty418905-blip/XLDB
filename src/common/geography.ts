@@ -3,7 +3,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {scopeKey} from '../core/types.ts';
 import type {ModelConfig} from '../core/types.ts';
 import type {ModelRunner} from '../core/models.ts';
-import type {PerspectivePlan,SceneMessage,SceneRoster,SceneScope} from './types.ts';
+import type {StatePlan as PerspectivePlan,StateMessage as SceneMessage,StateRoster as SceneRoster,StateScope as SceneScope} from './state-types.ts';
 
 export type GeographyBasis='author_setting'|'map_report'|'actual_event';
 export type GeographyShowMode='map'|'hidden';
@@ -13,6 +13,9 @@ export interface GeographyConfiguration {
   followAcceptedProse:boolean;
   backgroundSeed:'disabled'|'enabled';
 }
+export type CompanionLocationChoice=
+  |{status:'granted';latitude:number;longitude:number;accuracyMeters:number;observedAtMs:number}
+  |{status:'denied'|'unavailable'};
 export interface GeographyPlace {
   id:string;name:string;kind:string;parentId?:string|null;placement?:'located'|'unlocated';
 }
@@ -68,6 +71,7 @@ interface GeographyDependencies {
   checkpoint:(scope:SceneScope,reason:string)=>void;
   bump:(scope:SceneScope)=>void;
 }
+interface LocationRow {status:string;subject:string|null}
 interface SettingsRow {revision:number;body:string}
 interface MapRow {map_id:string;document_revision:number;document_hash:string;basis:string;body:string;imported:number}
 interface LayoutRow {revision:number;body:string}
@@ -106,13 +110,68 @@ export class GeographyStore {
       PRIMARY KEY(scope,reader));
       CREATE TABLE IF NOT EXISTS scene_geography_write_operations (
       scope TEXT NOT NULL,id TEXT NOT NULL,kind TEXT NOT NULL,request_hash TEXT NOT NULL,response TEXT NOT NULL,
-      PRIMARY KEY(scope,id));`);
+      PRIMARY KEY(scope,id));
+      CREATE TABLE IF NOT EXISTS companion_location_permissions (
+      scope TEXT PRIMARY KEY,subject TEXT,status TEXT NOT NULL,latitude REAL,longitude REAL,
+      accuracy_meters REAL,observed_at INTEGER,updated_at INTEGER NOT NULL);`);
+  }
+
+  companionLocation(scope:SceneScope){
+    if(this.dependencies.modeOf(scope)!=='companion')throw new Error('invalid_geography_mode');
+    const row=this.db.prepare('SELECT status,subject FROM companion_location_permissions WHERE scope=?')
+      .get(scopeKey(scope)) as LocationRow|undefined;
+    return {status:row?.status??'unavailable',subjectBound:row?.subject!==null&&row?.subject!==undefined};
+  }
+
+  recordCompanionLocation(scope:SceneScope,value:unknown,subjectId?:string){
+    if(this.dependencies.modeOf(scope)!=='companion')throw new Error('invalid_geography_mode');
+    const input=record(value,'invalid_companion_location'),status=input.status;
+    if(status!=='granted'&&status!=='denied'&&status!=='unavailable')throw new Error('invalid_companion_location');
+    let latitude:number|null=null,longitude:number|null=null,accuracy:number|null=null,observed:number|null=null;
+    if(status==='granted'){
+      if(typeof input.latitude!=='number'||!Number.isFinite(input.latitude)||input.latitude<-90||input.latitude>90||
+        typeof input.longitude!=='number'||!Number.isFinite(input.longitude)||input.longitude<-180||input.longitude>180||
+        typeof input.accuracyMeters!=='number'||!Number.isFinite(input.accuracyMeters)||input.accuracyMeters<0||input.accuracyMeters>100_000||
+        !Number.isSafeInteger(input.observedAtMs)||(input.observedAtMs as number)<0||
+        (input.observedAtMs as number)>Date.now()+5*60_000)throw new Error('invalid_companion_location');
+      latitude=input.latitude;longitude=input.longitude;accuracy=input.accuracyMeters;observed=input.observedAtMs as number;
+    }
+    const subject=subjectId===undefined?null:bounded(subjectId,200,'invalid_companion_location');
+    this.db.prepare(`INSERT INTO companion_location_permissions VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(scope) DO UPDATE SET
+      subject=excluded.subject,status=excluded.status,latitude=excluded.latitude,longitude=excluded.longitude,
+      accuracy_meters=excluded.accuracy_meters,observed_at=excluded.observed_at,updated_at=excluded.updated_at`)
+      .run(scopeKey(scope),subject,status,latitude,longitude,accuracy,observed,Date.now());
+    if(this.dependencies.state(scope).version>0)this.dependencies.bump(scope);
+    return {status,subjectBound:subject!==null};
+  }
+
+  rebindCompanionLocation(scope:SceneScope,previousSubject:string|null,nextSubject:string){
+    const row=this.db.prepare('SELECT subject FROM companion_location_permissions WHERE scope=?').get(scopeKey(scope)) as {subject:string|null}|undefined;
+    if(!row)return;
+    if(previousSubject&&previousSubject!==nextSubject||row.subject!==null&&row.subject!==nextSubject){
+      this.db.prepare(`UPDATE companion_location_permissions SET subject=?,status='denied',latitude=NULL,longitude=NULL,
+        accuracy_meters=NULL,observed_at=NULL,updated_at=? WHERE scope=?`).run(nextSubject,Date.now(),scopeKey(scope));
+    }else if(row.subject===null){
+      this.db.prepare('UPDATE companion_location_permissions SET subject=? WHERE scope=?').run(nextSubject,scopeKey(scope));
+    }
+  }
+
+  private locationBlocked(scope:SceneScope){
+    if(this.dependencies.modeOf(scope)!=='companion')return false;
+    const row=this.db.prepare('SELECT status FROM companion_location_permissions WHERE scope=?').get(scopeKey(scope)) as {status:string}|undefined;
+    return row?.status!=='granted';
   }
 
   configuration(scope:SceneScope):{revision:number}&GeographyConfiguration{
     const row=this.db.prepare('SELECT revision,body FROM scene_geography_settings WHERE scope=?').get(scopeKey(scope)) as SettingsRow|undefined;
     const config=row?configurationOf(JSON.parse(row.body)):structuredClone(defaultConfiguration);
     if(this.dependencies.fullRoleplay(scope))return {revision:row?.revision??0,...config,enabled:true,followAcceptedProse:true,backgroundSeed:'enabled'};
+    if(this.dependencies.modeOf(scope)==='companion'){
+      const location=this.companionLocation(scope);
+      if(this.locationBlocked(scope))
+        return {revision:row?.revision??0,...config,enabled:false};
+      if(location.status==='granted'&&!row)return {revision:0,...config,enabled:true,showMode:'map',followAcceptedProse:true};
+    }
     return {revision:row?.revision??0,...config};
   }
 
@@ -120,7 +179,7 @@ export class GeographyStore {
     return this.dependencies.transaction(()=>{
       const state=this.dependencies.state(scope);if(!state.version)throw new Error('invalid_scene_not_configured');
       operationId(guard.operationId);const config=configurationOf(value),current=this.configuration(scope);
-      if(config.enabled&&this.dependencies.modeOf(scope)!=='roleplay')throw new Error('invalid_geography_mode');
+      if(config.enabled&&this.dependencies.modeOf(scope)==='companion'&&this.locationBlocked(scope))throw new Error('geography_location_denied');
       const hash=requestHash('configure',[config,guard.expectedRevision]);
       const duplicate=this.duplicate(scope,guard.operationId,'configure',hash);if(duplicate)return {...duplicate,duplicate:true};
       assertRevision(current.revision,guard.expectedRevision,'invalid_geography_revision');
@@ -154,7 +213,6 @@ export class GeographyStore {
 
   import(scope:SceneScope,value:unknown,guard:{expectedVersion:number;operationId:string;documentHash:string;allowInitialPositionConflicts?:boolean}){
     return this.dependencies.transaction(()=>{
-      if(this.dependencies.modeOf(scope)!=='roleplay')throw new Error('invalid_geography_mode');
       const preview=this.previewImport(scope,value);operationId(guard.operationId);
       const hash=requestHash('import',[preview.normalized,guard.expectedVersion,guard.documentHash,guard.allowInitialPositionConflicts===true]);
       const duplicate=this.duplicate(scope,guard.operationId,'import',hash);if(duplicate)return {...duplicate,duplicate:true};
@@ -180,7 +238,6 @@ export class GeographyStore {
 
   correct(scope:SceneScope,value:unknown,guard:{expectedVersion:number;operationId:string}){
     return this.dependencies.transaction(()=>{
-      if(this.dependencies.modeOf(scope)!=='roleplay')throw new Error('invalid_geography_mode');
       const state=this.dependencies.state(scope);if(!state.version)throw new Error('invalid_scene_not_configured');
       operationId(guard.operationId);const correction=correctionOf(value,state.roster),hash=requestHash('correct',[correction,guard.expectedVersion]);
       const duplicate=this.duplicate(scope,guard.operationId,'correct',hash);if(duplicate)return {...duplicate,duplicate:true};
@@ -200,7 +257,6 @@ export class GeographyStore {
 
   clearCorrection(scope:SceneScope,id:string,guard:{expectedVersion:number;operationId:string}){
     return this.dependencies.transaction(()=>{
-      if(this.dependencies.modeOf(scope)!=='roleplay')throw new Error('invalid_geography_mode');
       const state=this.dependencies.state(scope);operationId(guard.operationId);const hash=requestHash('clear-correction',[id,guard.expectedVersion]);
       const duplicate=this.duplicate(scope,guard.operationId,'clear-correction',hash);if(duplicate)return {...duplicate,duplicate:true};
       if(state.version!==guard.expectedVersion)throw new Error('context_changed_retry');
@@ -217,7 +273,7 @@ export class GeographyStore {
     const empty={schema:'xldb-geography-projection-v1' as const,sceneVersion:state.version,revision:settings.revision,configured:false,
       enabled:settings.enabled,showMode:settings.showMode,mapIds:[] as string[],places:[],relations:[],routes:[],positions:[],
       layout:{revision:0,basis:'schematic' as const,axes:'x-east-y-south' as const,nodes:{} as Record<string,GeographyLayoutNode>},unlocated:[],issues:[] as string[]};
-    if((!settings.enabled&&!options.includeDisabled)||(settings.showMode==='hidden'&&!options.ignoreDisplay)||this.dependencies.modeOf(scope)!=='roleplay')return empty;
+    if(this.locationBlocked(scope)||(!settings.enabled&&!options.includeDisabled)||(settings.showMode==='hidden'&&!options.ignoreDisplay))return empty;
     const folded=this.fold(scope,reader),places=[...folded.places.values()].map(entry=>projectPlace(entry,folded));
     const relations=[...folded.relations.values()].filter(entry=>folded.places.has(entry.value.from)&&folded.places.has(entry.value.to)).map(entry=>projectEntry(entry));
     const routes=[...folded.routes.values()].filter(entry=>folded.places.has(entry.value.from)&&folded.places.has(entry.value.to)).map(entry=>projectEntry(entry));
@@ -234,7 +290,6 @@ export class GeographyStore {
 
   saveLayout(scope:SceneScope,readerId:string,value:unknown,guard:{expectedRevision:number;operationId:string}){
     return this.dependencies.transaction(()=>{
-      if(this.dependencies.modeOf(scope)!=='roleplay')throw new Error('invalid_geography_mode');
       const reader=readerOf(readerId,this.dependencies.state(scope).roster),input=layoutInput(value),current=this.layoutRow(scope,reader);
       operationId(guard.operationId);const hash=requestHash('layout',[reader,input,guard.expectedRevision]);
       const duplicate=this.duplicate(scope,guard.operationId,'layout',hash);if(duplicate)return {...duplicate,duplicate:true};
@@ -263,7 +318,7 @@ export class GeographyStore {
   }
 
   context(scope:SceneScope,characterId:string):string{
-    if(!this.configuration(scope).enabled||this.dependencies.modeOf(scope)!=='roleplay')return '';
+    if(!this.configuration(scope).enabled)return '';
     const projection=this.project(scope,characterId,{ignoreDisplay:true});if(!projection.places.length&&!projection.positions.length)return '';
     const position=projection.positions.find(item=>item.actorId===characterId);
     const places=new Map(projection.places.map(place=>[place.id,place]));
@@ -277,7 +332,7 @@ export class GeographyStore {
 
   async extract(scope:SceneScope,source:SceneMessage,plan:PerspectivePlan,roster:SceneRoster,config:GeographyConfiguration,
     modelConfig:ModelConfig,run:ModelRunner,priorOperations:readonly GeographyOperation[]=[]):Promise<GeographyOperation[]> {
-    if(!config.enabled||!config.followAcceptedProse||this.dependencies.modeOf(scope)!=='roleplay')return [];
+    if(!config.enabled||!config.followAcceptedProse)return [];
     const observations=plan.observations;if(!observations.length)return [];
     const readers=[...new Set(observations.flatMap(item=>item.readers).concat(observations.some(item=>item.playerVisible)?['player']:[]))];
     const references=new Map<string,{id:string;name:string;kind:string;aliases:string[];knownBy:string[]}>();

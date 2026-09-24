@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {scopeKey} from '../core/types.ts';
 import type {ModelConfig} from '../core/types.ts';
 import type {ModelRunner} from '../core/models.ts';
-import type {SceneMessage,SceneRoster,SceneScope,PerspectivePlan} from './types.ts';
+import type {StateMessage as SceneMessage,StateRoster as SceneRoster,StateScope as SceneScope,StatePlan as PerspectivePlan} from './state-types.ts';
 
 export const physiologyNeeds=['hydration','nutrition','bladder','bowel','sleep','energy'] as const;
 export type PhysiologyNeed=typeof physiologyNeeds[number];
@@ -85,7 +85,7 @@ export class PhysiologyStore {
   configuration(scope:SceneScope):{revision:number;config:PhysiologyConfiguration}{
     const row=this.db.prepare('SELECT revision,body FROM scene_physiology_settings WHERE scope=?').get(scopeKey(scope)) as SettingsRow|undefined;
     const roster=this.dependencies.state(scope).roster;
-    const config=row?configurationOf(JSON.parse(row.body),roster,this.dependencies.modeOf(scope),true):structuredClone(defaultConfiguration);
+    const config=row?configurationOf(JSON.parse(row.body),roster,true):structuredClone(defaultConfiguration);
     if(this.dependencies.fullRoleplay(scope))return {revision:row?.revision??0,config:{enabled:true,dailyNeeds:[...physiologyNeeds],
       sustainedEffects:true,reproductive:true,sexualArousal:true,trackedCharacterIds:roster.characters.map(actor=>actor.id)}};
     return {revision:row?.revision??0,config};
@@ -95,7 +95,7 @@ export class PhysiologyStore {
     return this.dependencies.transaction(()=>{
       const state=this.dependencies.state(scope);if(!state.version)throw new Error('invalid_scene_not_configured');
       const current=this.configuration(scope);assertRevision(expectedRevision,current.revision);
-      const config=configurationOf(value,state.roster,this.dependencies.modeOf(scope));
+      const config=configurationOf(value,state.roster);
       if(JSON.stringify(config)===JSON.stringify(current.config))return {revision:current.revision,config};
       this.dependencies.checkpoint(scope,'角色生理设置变更');
       const revision=current.revision+1;
@@ -257,7 +257,7 @@ function needStageAt(need:PhysiologyNeed,value:{stage:typeof needStages[number];
   return stage;
 }
 
-function configurationOf(value:unknown,roster:SceneRoster,mode:'roleplay'|'companion'|undefined,tolerateRemovedCharacters=false):PhysiologyConfiguration{
+function configurationOf(value:unknown,roster:SceneRoster,tolerateRemovedCharacters=false):PhysiologyConfiguration{
   const input=record(value,'invalid_physiology_config'),allowed=new Set(['enabled','dailyNeeds','sustainedEffects','reproductive','sexualArousal','trackedCharacterIds']);
   if(Object.keys(input).some(key=>!allowed.has(key))||typeof input.enabled!=='boolean'||!Array.isArray(input.dailyNeeds)||!Array.isArray(input.trackedCharacterIds)
     ||typeof input.sustainedEffects!=='boolean'||typeof input.reproductive!=='boolean'||typeof input.sexualArousal!=='boolean')throw new Error('invalid_physiology_config');
@@ -266,8 +266,8 @@ function configurationOf(value:unknown,roster:SceneRoster,mode:'roleplay'|'compa
   const requestedIds=[...new Set(input.trackedCharacterIds.map(item=>bounded(item,200,'invalid_scene_character')))];
   if(requestedIds.length>32||(!tolerateRemovedCharacters&&requestedIds.some(id=>!roster.characters.some(character=>character.id===id))))throw new Error('invalid_scene_character');
   const ids=requestedIds.filter(id=>roster.characters.some(character=>character.id===id));
-  const reproductive=mode==='companion'?false:input.reproductive,sexualArousal=mode==='companion'?false:input.sexualArousal;
-  return {enabled:input.enabled,dailyNeeds,sustainedEffects:input.sustainedEffects,reproductive,sexualArousal,trackedCharacterIds:ids};
+  return {enabled:input.enabled,dailyNeeds,sustainedEffects:input.sustainedEffects,
+    reproductive:input.reproductive,sexualArousal:input.sexualArousal,trackedCharacterIds:ids};
 }
 
 function correctionOf(value:unknown,roster:SceneRoster,config:PhysiologyConfiguration,clock:{known:boolean;timeMs:number|null}):Omit<StoredCorrection,'afterSourceId'|'createdAtMs'>{

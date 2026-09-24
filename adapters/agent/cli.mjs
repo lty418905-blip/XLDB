@@ -93,6 +93,16 @@ if(command==='onboard') {
       case 'configurePhysiology': result=runtime.configurePhysiology(request.scope,request.config,request.expectedRevision);break;
       case 'correctPhysiology': result=runtime.correctPhysiology(request.scope,request.correction,request.expectedRevision);break;
       case 'clearPhysiologyCorrection': result=runtime.clearPhysiologyCorrection(request.scope,request.characterId,request.id,request.expectedRevision);break;
+      case 'geographyStatus': result=runtime.geographyStatus(request.scope,request.readerId);break;
+      case 'setCompanionLocation': result=runtime.setCompanionLocation(request.scope,request.location);break;
+      case 'configureGeography': result=runtime.configureGeography(request.scope,request.config,{expectedRevision:request.expectedRevision,operationId:request.operationId});break;
+      case 'previewGeographyImport': result=runtime.previewGeographyImport(request.scope,request.document);break;
+      case 'previewGeographyBackground': result=await runtime.previewGeographyBackground(request.scope,request.input);break;
+      case 'importGeography': result=runtime.importGeography(request.scope,request.document,{expectedVersion:request.expectedVersion,operationId:request.operationId,documentHash:request.documentHash,allowInitialPositionConflicts:request.allowInitialPositionConflicts});break;
+      case 'exportGeography': result=runtime.exportGeography(request.scope,request.readerId);break;
+      case 'correctGeography': result=runtime.correctGeography(request.scope,request.correction,{expectedVersion:request.expectedVersion,operationId:request.operationId});break;
+      case 'clearGeographyCorrection': result=runtime.clearGeographyCorrection(request.scope,request.id,{expectedVersion:request.expectedVersion,operationId:request.operationId});break;
+      case 'saveGeographyLayout': result=runtime.saveGeographyLayout(request.scope,request.readerId??'player',request.layout,{expectedRevision:request.expectedRevision,operationId:request.operationId});break;
       case 'contactSettings': result=runtime.setContactSettings(request.scope,request.settings,request.expectedRevision);break;
       case 'companionBusy': result=runtime.setBusyUntil(request.scope,request.busyUntilMs,request.expectedRevision);break;
       case 'companionPoll': result=await runtime.pollCompanion(request.scope,request.characterId,request.trigger);break;
@@ -120,10 +130,10 @@ if(command==='onboard') {
       case 'sync': result=await runtime.sync(request.scope,request.messages,{expectedVersion:request.expectedVersion,operationId:request.operationId});break;
       case 'reconfirm': result=await runtime.reconfirmSource(request.scope,request.sourceId,{expectedVersion:request.expectedVersion,operationId:request.operationId});break;
       case 'retry': result=await runtime.retry(request.scope);break;
-      case 'recall': result=await runtime.recall(request.scope,request.characterId,request.query);break;
+      case 'recall': result=await runtime.recall(request.scope,request.characterId,request.query,request.placeQuery);break;
       case 'turn': {
         if(typeof request.accept!=='boolean')throw new Error('invalid_accept');
-        const draft=await runtime.prepare(request.scope,request.envelope,request.input,request.userSubmission);
+        const draft=await runtime.prepare(request.scope,request.envelope,request.input,request.userSubmission,request.placeQuery);
         if(draft.status!=='prepared') {result=draft;break;}
         const receipt=request.accept?await runtime.accept(request.scope,draft.draftId):runtime.reject(request.scope,draft.draftId);
         result={status:request.accept?(receipt.status==='committed'||receipt.status==='duplicate'?'accepted':'failed'):'preview',answer:draft.answer,userMessageId:draft.userMessageId,receipt};

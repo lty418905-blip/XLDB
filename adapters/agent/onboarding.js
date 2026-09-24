@@ -6,12 +6,35 @@ const confirmButton=document.getElementById('confirm');
 const previewButton=document.getElementById('preview');
 const cancelButton=document.getElementById('cancel');
 const review=document.getElementById('review');
+const allowLocationButton=document.getElementById('allowLocation');
+const skipLocationButton=document.getElementById('skipLocation');
+const locationStatus=document.getElementById('locationStatus');
 let selectionToken=null;
 let revision=0;
+let location=null;
+let locationPending=false;
+let locationRequest=0;
+let finished=false;
 
 function message(text,kind=''){feedback.textContent=text;feedback.className=`feedback ${kind}`;}
-function pending(value){previewButton.disabled=value;cancelButton.disabled=value;confirmButton.disabled=value||!selectionToken;
+function updateConfirm(){confirmButton.disabled=!selectionToken||!location||locationPending;}
+function pending(value){previewButton.disabled=value;cancelButton.disabled=value;confirmButton.disabled=value||!selectionToken||!location||locationPending;
+  allowLocationButton.disabled=value;skipLocationButton.disabled=value;
   for(const input of document.querySelectorAll('input[name="source"],input[type="file"]'))input.disabled=value;}
+function setLocation(value,text,button){
+  location=value;locationPending=false;locationStatus.textContent=text;
+  allowLocationButton.classList.toggle('selected',button==='allow');
+  skipLocationButton.classList.toggle('selected',button==='skip');
+  updateConfirm();
+}
+function positionLocation(position){
+  const {latitude,longitude,accuracy}=position.coords??{};
+  const observedAtMs=position.timestamp;
+  if(!Number.isFinite(latitude)||latitude < -90||latitude > 90||!Number.isFinite(longitude)||longitude < -180||longitude > 180||
+    !Number.isFinite(accuracy)||accuracy < 0||accuracy > 100_000||!Number.isSafeInteger(observedAtMs)||
+    observedAtMs < 0||observedAtMs > Date.now()+300_000)throw new Error('invalid_position');
+  return {status:'granted',latitude,longitude,accuracyMeters:accuracy,observedAtMs};
+}
 function chosen(){return document.querySelector('input[name="source"]:checked');}
 const labels={work:'工作',home:'生活',social:'交友',status:'相识状态',kinship:'亲属关系',romance:'恋爱关系',sharedHistory:'共同经历',commitments:'既有承诺',debts:'既有债务',
   voice:'说话方式',closenessPace:'关系推进',supportStyle:'陪伴方式',whenUserBusy:'你忙碌时',boundaries:'相处边界',openingExample:'开场示例'};
@@ -45,10 +68,33 @@ async function api(route,body){
   const response=await fetch(route,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const result=await response.json();if(!response.ok)throw new Error(result.message||'角色选择服务暂不可用，请回到 Agent 重新打开。');return result;
 }
-function finish(text){document.getElementById('chooser').hidden=true;document.getElementById('done').style.display='block';document.getElementById('doneText').textContent=text;document.getElementById('actions').hidden=true;}
-function changed(){revision++;selectionToken=null;confirmButton.disabled=true;review.hidden=true;message('选择已改变，请重新预览。');}
+function finish(text){finished=true;locationRequest++;location=null;document.getElementById('chooser').hidden=true;document.getElementById('done').style.display='block';document.getElementById('doneText').textContent=text;document.getElementById('actions').hidden=true;}
+function changed(){revision++;selectionToken=null;updateConfirm();review.hidden=true;message('选择已改变，请重新预览。');}
 
 dialog.addEventListener('cancel',event=>{event.preventDefault();cancelButton.click();});
+allowLocationButton.addEventListener('click',()=>{
+  const request=++locationRequest;
+  location=null;locationPending=true;updateConfirm();
+  allowLocationButton.classList.add('selected');skipLocationButton.classList.remove('selected');
+  locationStatus.textContent='正在等待浏览器获取位置…';
+  if(!navigator.geolocation?.getCurrentPosition){
+    setLocation({status:'unavailable'},'当前浏览器不支持定位。角色仍可启用，伴侣地图将关闭。','allow');return;
+  }
+  try{navigator.geolocation.getCurrentPosition(position=>{
+    if(finished||request!==locationRequest)return;
+    try{setLocation(positionLocation(position),'已取得本次位置。确认启用角色后，伴侣地图才会使用它。','allow');}
+    catch{setLocation({status:'unavailable'},'未能取得可用位置。角色仍可启用，伴侣地图将关闭。','allow');}
+  },error=>{
+    if(finished||request!==locationRequest)return;
+    setLocation({status:error?.code===1?'denied':'unavailable'},
+      error?.code===1?'你没有授予浏览器定位权限。角色仍可启用，伴侣地图将关闭。':'定位未完成。角色仍可启用，伴侣地图将关闭。','allow');
+  },{enableHighAccuracy:false,maximumAge:0,timeout:10_000});}
+  catch{if(!finished&&request===locationRequest)setLocation({status:'unavailable'},'浏览器无法启动定位。角色仍可启用，伴侣地图将关闭。','allow');}
+});
+skipLocationButton.addEventListener('click',()=>{
+  locationRequest++;
+  setLocation({status:'denied'},'已选择不用定位。角色仍可启用，伴侣地图将关闭。','skip');
+});
 fileInput.addEventListener('change',()=>{document.querySelector('input[value="custom"]').checked=true;changed();});
 previewButton.addEventListener('click',async()=>{
   const choice=chosen();if(!choice){message('请先选择一个角色。','error');return;}
@@ -71,9 +117,9 @@ previewButton.addEventListener('click',async()=>{
   finally{pending(false);}
 });
 confirmButton.addEventListener('click',async()=>{
-  if(!selectionToken)return;pending(true);
+  if(!selectionToken||!location||locationPending)return;pending(true);
   try{
-    const result=await api('confirm',{selectionToken});selectionToken=null;
+    const result=await api('confirm',{selectionToken,location});selectionToken=null;location=null;
     finish(`已选择 ${result.selection.displayName}。${result.import.status==='ready'?'角色已经可以继续使用。':
       result.import.requiresCompletion?'初始资料已导入；Agent 将完成已授权的细节补全后开始交流。':'初始资料已导入；Agent 将载入这份资料后开始交流。'}`);
   }catch(error){selectionToken=null;message(`未启用角色：${error.message||'导入失败'}。请重新预览。`,'error');pending(false);}

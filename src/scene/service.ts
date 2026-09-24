@@ -14,7 +14,7 @@ import {CompanionFlow} from './companion-flow.ts';
 import {processingFingerprint} from './processing.ts';
 import type {ProcessingAddress,ProcessingProgress} from './processing.ts';
 import {sceneAddressGuidance} from './address.ts';
-import {geographyBackgroundSources,geographyBackgroundSystem,decodeGeographyBackground} from './geography-background.ts';
+import {geographyBackgroundSources,geographyBackgroundSystem,decodeGeographyBackground} from '../common/geography-background.ts';
 import {absenceExplanationTask,validateAbsenceExplanation} from '../emotion/absence-explanation.ts';
 import {companionIdentityGuidance,companionIdentityIssue,ensureCompanionIdentityBody} from '../companion/identity-expression.ts';
 
@@ -46,7 +46,7 @@ export class SceneCore {
   configure(scope:SceneScope, value:unknown) { return this.authority.configure(scope,rosterOf(value)); }
   async previewGeographyBackground(scope:SceneScope,value:unknown,configs:Configurations){
     const input=object(value),state=this.authority.state(scope),modelRevision=this.modelRevision;
-    if(this.authority.interactions.modeOf(scope)!=='roleplay'||this.authority.geography.configuration(scope).backgroundSeed!=='enabled')throw new Error('geography_background_disabled');
+    if(this.authority.geography.configuration(scope).backgroundSeed!=='enabled')throw new Error('geography_background_disabled');
     const sources=geographyBackgroundSources(input.sources),mapId=text(input.mapId,200),revision=integer(input.revision,1);
     if(input.basis!=='author_setting'&&input.basis!=='map_report')throw new Error('invalid_geography_basis');
     const actors=['player',...state.roster.characters.map(actor=>actor.id)];
@@ -129,7 +129,7 @@ export class SceneCore {
     const state=this.authority.state(scope);
     const geography=this.authority.geography.configuration(scope);
     return this.authority.processing.progress(scope,state,Boolean(this.authority.worldSettings(scope)),this.authority.physiology.configuration(scope).config.enabled,
-      this.authority.interactions.modeOf(scope)==='roleplay'&&geography.enabled&&geography.followAcceptedProse);
+      geography.enabled&&geography.followAcceptedProse);
   }
   syncState(scope:SceneScope) { return this.authority.syncState(scope); }
   invalidateModelConfiguration() {
@@ -412,7 +412,8 @@ export class SceneCore {
     ]};
   }
 
-  async prepare(scope:SceneScope, envelopeValue:unknown, inputValue:unknown, configs:Configurations, write?:PrepareWrite) {
+  async prepare(scope:SceneScope, envelopeValue:unknown, inputValue:unknown, configs:Configurations, write?:PrepareWrite,
+    replyContext?:(visibleInput:string)=>Promise<string>) {
     const modelRevision=this.modelRevision;
     this.prune();
     if (this.drafts.size>=100) throw new Error('invalid_scene_too_many_drafts');
@@ -468,6 +469,7 @@ export class SceneCore {
     context.context+=this.commitmentsContext(scope,character.id);
     context.context+=await direct(character,context.context,current);
     context.context+=await this.companionContext(scope,character.id,context.context+'\n当前用户正文：'+current,configs,userMessage.id,decisionNowMs);
+    if(replyContext){context.context+=await replyContext(current);assertCurrent();}
     const companion=this.authority.interactions.modeOf(scope)==='companion';
     const persona=companion
       ? `当前是伴侣模式，只扮演 ${character.name}，稳定身份 ${character.id}。${companionIdentity(envelope)}自然、直接地与用户交谈，按对话语境决定是否描述动作；不把用户称为玩家。只表达这个角色实际可知的内容，不代写其他角色或用户的内心、台词和选择。用户正文中明确已经完成的事件已经发生，不再重演；只回应此刻。${companionIdentityGuidance(current)}\n${character.persona}`
@@ -661,7 +663,7 @@ export class SceneCore {
             ()=>this.authority.physiology.extract(source,plan,state.roster,physiologyConfiguration.config,physiologyAtMs,configs.physiology,
               (config,prompts,json)=>this.models.structuredTask(config,prompts))):undefined;
           const geographyConfiguration=this.authority.geography.configuration(scope);
-          const geographyOperations=interactionMode==='roleplay'&&geographyConfiguration.enabled&&geographyConfiguration.followAcceptedProse
+          const geographyOperations=geographyConfiguration.enabled&&geographyConfiguration.followAcceptedProse
             ?await this.stage(scope,source,'geography',undefined,
               {schema:1,source:this.modelSource(source),plan,configuration:geographyConfiguration,version:state.version,config:configs.geography},
               ()=>this.authority.geography.extract(scope,source,plan,state.roster,geographyConfiguration,configs.geography,

@@ -22,6 +22,7 @@ import {relationshipEvidenceTask,decodeRelationshipEvidence} from '../companion/
 import {companionIdentityGuidance} from '../companion/identity-expression.ts';
 import {IdleLearning} from '../companion/idle-learning.ts';
 import {startLearningWorker} from '../companion/learning-worker.ts';
+import {lookupPlace} from './place-lookup.ts';
 
 export type HostDelegate=(task:HostTask)=>Promise<string>;
 export interface AgentOptions {
@@ -232,9 +233,17 @@ export class AgentRuntime {
   resources(scope:SceneScope){this.assertOpen();return this.core.scene.resources(this.companionScope(scope));}
   initializationProvenance(scope:SceneScope){this.assertOpen();return this.authority.scene.initialization.provenance(this.companionScope(scope));}
   previewCompanionPreset(scope:SceneScope,document:unknown){this.assertOpen();return this.authority.scene.presets.preview(this.companionScope(scope),document);}
-  importCompanionPreset(scope:SceneScope,document:unknown,guard:CompanionPresetGuard){
+  importCompanionPreset(scope:SceneScope,document:unknown,guard:CompanionPresetGuard,
+    location?:import('../common/geography.ts').CompanionLocationChoice,subjectId?:string){
     return this.learningActivity(()=>{
-    this.assertOpen();return this.authority.scene.presets.import(this.companionScope(scope),document,guard);
+    this.assertOpen();scope=this.companionScope(scope);
+    return this.authority.scene.transaction(()=>{
+      const result=this.authority.scene.presets.import(scope,document,guard);
+      const choice=!result.duplicate&&location!==undefined
+        ?this.authority.scene.geography.recordCompanionLocation(scope,location,subjectId??this.authority.scene.subject(scope)?.subjectId)
+        :this.authority.scene.geography.companionLocation(scope);
+      return {...result,location:choice};
+    });
   
     });
   }
@@ -338,14 +347,14 @@ export class AgentRuntime {
     });
   }
   physiologyStatus(scope:SceneScope,readerId:string='player'){this.assertOpen();return this.authority.scene.physiology.status(this.companionScope(scope),{readerId});}
-  configurePhysiology(scope:SceneScope,config:import('../scene/physiology.ts').PhysiologyConfiguration,expectedRevision:number){
+  configurePhysiology(scope:SceneScope,config:import('../common/physiology.ts').PhysiologyConfiguration,expectedRevision:number){
     return this.learningActivity(()=>{
     this.assertOpen();scope=this.companionScope(scope);const result=this.authority.scene.physiology.configure(scope,config,expectedRevision);
     this.invalidateCandidates(scope);return result;
   
     });
   }
-  correctPhysiology(scope:SceneScope,correction:import('../scene/physiology.ts').PhysiologyCorrectionInput,expectedRevision:number){
+  correctPhysiology(scope:SceneScope,correction:import('../common/physiology.ts').PhysiologyCorrectionInput,expectedRevision:number){
     return this.learningActivity(()=>{
     this.assertOpen();scope=this.companionScope(scope);const result=this.authority.scene.physiology.correct(scope,correction,expectedRevision);
     this.invalidateCandidates(scope);return result;
@@ -357,6 +366,61 @@ export class AgentRuntime {
     this.assertOpen();scope=this.companionScope(scope);const result=this.authority.scene.physiology.clearCorrection(scope,characterId,id,expectedRevision);
     this.invalidateCandidates(scope);return result;
   
+    });
+  }
+  geographyStatus(scope:SceneScope,readerId:string='player'){
+    this.assertOpen();scope=this.companionScope(scope);
+    return {location:this.authority.scene.geography.companionLocation(scope),configuration:this.authority.scene.geography.configuration(scope),
+      projection:this.authority.scene.geography.project(scope,readerId)};
+  }
+  setCompanionLocation(scope:SceneScope,location:import('../common/geography.ts').CompanionLocationChoice){
+    return this.learningActivity(()=>{
+      this.assertOpen();scope=this.companionScope(scope);
+      const result=this.authority.scene.transaction(()=>this.authority.scene.geography.recordCompanionLocation(scope,location,
+        this.authority.scene.subject(scope)?.subjectId));
+      this.invalidateCandidates(scope);return result;
+    });
+  }
+  configureGeography(scope:SceneScope,config:import('../common/geography.ts').GeographyConfiguration,guard:{expectedRevision:number;operationId:string}){
+    return this.learningActivity(()=>{
+      this.assertOpen();scope=this.companionScope(scope);
+      const result=this.authority.scene.geography.configure(scope,config,guard);
+      this.invalidateCandidates(scope);return result;
+    });
+  }
+  previewGeographyImport(scope:SceneScope,document:unknown){
+    this.assertOpen();return this.authority.scene.geography.previewImport(this.companionScope(scope),document);
+  }
+  async previewGeographyBackground(scope:SceneScope,input:unknown){
+    this.assertOpen();return this.core.scene.previewGeographyBackground(this.companionScope(scope),input,this.config);
+  }
+  importGeography(scope:SceneScope,document:unknown,guard:{expectedVersion:number;operationId:string;documentHash:string;allowInitialPositionConflicts?:boolean}){
+    return this.learningActivity(()=>{
+      this.assertOpen();scope=this.companionScope(scope);
+      const result=this.authority.scene.geography.import(scope,document,guard);
+      this.invalidateCandidates(scope);return result;
+    });
+  }
+  exportGeography(scope:SceneScope,readerId:string='player'){
+    this.assertOpen();return this.authority.scene.geography.export(this.companionScope(scope),readerId);
+  }
+  correctGeography(scope:SceneScope,correction:import('../common/geography.ts').GeographyCorrectionInput,guard:{expectedVersion:number;operationId:string}){
+    return this.learningActivity(()=>{
+      this.assertOpen();scope=this.companionScope(scope);
+      const result=this.authority.scene.geography.correct(scope,correction,guard);
+      this.invalidateCandidates(scope);return result;
+    });
+  }
+  clearGeographyCorrection(scope:SceneScope,id:string,guard:{expectedVersion:number;operationId:string}){
+    return this.learningActivity(()=>{
+      this.assertOpen();scope=this.companionScope(scope);
+      const result=this.authority.scene.geography.clearCorrection(scope,id,guard);
+      this.invalidateCandidates(scope);return result;
+    });
+  }
+  saveGeographyLayout(scope:SceneScope,readerId:string,layout:unknown,guard:{expectedRevision:number;operationId:string}){
+    return this.learningActivity(()=>{
+      this.assertOpen();return this.authority.scene.geography.saveLayout(this.companionScope(scope),readerId,layout,guard);
     });
   }
   setContactSettings(scope:SceneScope,settings:Parameters<import('../companion/store.ts').CompanionStore['setContactSettings']>[1],expectedRevision:number){
@@ -500,9 +564,10 @@ export class AgentRuntime {
     });
   }
   /** Only the target's already-filtered packet is returned to the calling foreground. */
-  async recall(scope:SceneScope,characterId:string,query:string) {
+  async recall(scope:SceneScope,characterId:string,query:string,placeQuery?:string) {
     return this.learningActivity(async ()=>{
     this.assertOpen();scope=this.companionScope(scope);characterId=text(characterId,200);query=text(query,20000);
+    placeQuery=this.placeQuery(query,placeQuery);
     await this.reflectProfile(scope).catch(()=>{});
     await this.ensureCompanionPreset(scope);
     const state=this.authority.scene.state(scope);
@@ -519,23 +584,26 @@ export class AgentRuntime {
       prior?.envelope??{targetId:characterId,mode:'direct',presentIds:[characterId]},state,context.emotion);
     context.context+=this.authority.scene.worldContext(scope,characterId);
     context.context+=this.authority.scene.physiology.context(scope,characterId);
+    context.context+=this.authority.scene.geography.context(scope,characterId);
     context.context+=this.authority.scene.commitments.projectPersistent(scope,{characterId,purpose:'expression',mode:'companion'}).systemText;
     context.context+=await this.core.scene.companionContext(scope,characterId,context.context,this.config,undefined,decisionNowMs);
+    if(placeQuery){context.context+=(await lookupPlace(this.delegate,placeQuery)).context;assertCurrent();}
     context.context+=companionIdentityGuidance(null);
     return {scope,characterId,version:context.version,persona:character.persona,context:context.context,memories:context.memories,facts:context.facts,episodes:context.episodes,legacy:context.legacy,emotion:context.emotion,preferences:context.preferences,retrieval:context.retrieval};
   
     });
   }
   /** The submitted user text is accepted now; only the generated reply awaits accept(). */
-  async prepare(scope:SceneScope,envelope:unknown,input:string,submission?:{userMessageId:string;operationId?:string;expectedVersion?:number;acceptedAtMs?:number}) {
+  async prepare(scope:SceneScope,envelope:unknown,input:string,submission?:{userMessageId:string;operationId?:string;expectedVersion?:number;acceptedAtMs?:number},placeQuery?:string) {
     return this.learningActivity(async ()=>{
-    this.assertOpen();scope=this.companionScope(scope);
+    this.assertOpen();scope=this.companionScope(scope);input=text(input,20000);placeQuery=this.placeQuery(input,placeQuery);
     await this.ensureCompanionPreset(scope);
     const state=this.authority.scene.state(scope);
     const userMessageId=submission?.userMessageId??'agent-user-'+randomUUID();
     const existing=state.sources.find(source=>source.id===userMessageId);
     const draft=await this.core.scene.prepare(scope,envelope,input,this.config,{userMessageId,operationId:submission?.operationId??randomUUID(),
-      expectedVersion:submission?.expectedVersion??state.version,acceptedAtMs:submission?.acceptedAtMs??existing?.acceptedAtMs??Date.now()});
+      expectedVersion:submission?.expectedVersion??state.version,acceptedAtMs:submission?.acceptedAtMs??existing?.acceptedAtMs??Date.now()},
+      placeQuery?async visibleInput=>visibleInput.includes(placeQuery!)?(await lookupPlace(this.delegate,placeQuery!)).context:'':undefined);
     if(draft.status==='failed')return {status:'failed' as const,phase:draft.phase,version:draft.version,error:draft.error,userMessageId};
     if(!draft.draftId || !draft.userMessage || !draft.assistantMessage) return {status:'needs_clarification' as const,version:draft.version,reason:'Clarify the current actors and what they can observe.'};
     this.candidates.set(draft.draftId,{scope,messages:[draft.userMessage,draft.assistantMessage]});
@@ -658,6 +726,12 @@ export class AgentRuntime {
     this.assertOpen();const interaction=this.authority.scene.interactions.get(scopeOf(value),'agent-roleplay');
     if(interaction.mode!=='roleplay')throw new Error('invalid_interaction_mode');
     this.authority.scene.interactions.assertActive(interaction.scope,interaction.revision);return interaction.scope;
+  }
+  private placeQuery(input:string,query?:string){
+    if(query===undefined)return undefined;
+    const place=text(query,300).trim();
+    if(!input.includes(place))throw new Error('invalid_place_query');
+    return place;
   }
   private assertOpen(){if(this.closed)throw new Error('agent_runtime_closed');}
   private learningActivity<T>(work:()=>T):T {

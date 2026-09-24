@@ -32,8 +32,8 @@ import {SceneInitialization} from './initialization.ts';
 import {UserModelStore,decodeProfileCandidates} from '../user-model/index.ts';
 import type {ProfileCandidate} from '../user-model/types.ts';
 import {CompanionStore} from '../companion/index.ts';
-import {PhysiologyStore} from './physiology.ts';
-import {GeographyStore} from './geography.ts';
+import {PhysiologyStore} from '../common/physiology.ts';
+import {GeographyStore} from '../common/geography.ts';
 import {CompanionPresets} from '../companion/presets.ts';
 import {RelationshipAssessmentStore} from '../companion/relationship-assessment.ts';
 import type {RelationshipAssessmentInput,RelationshipCorrection} from '../companion/relationship-assessment.ts';
@@ -138,7 +138,11 @@ export class SceneAuthority {
       const previousSubject=this.subject(scope)?.subjectId;
       const bindingId=subjectBindingId(context.host,context.baseScope);
       const binding=this.userModel.bindSubject(context.host,bindingId,subjectId,nowMs);
-      if(previousSubject!==binding.subjectId)this.relationshipAssessments.clearModels(scope);
+      if(context.host==='agent')this.geography.rebindCompanionLocation(scope,previousSubject??null,binding.subjectId);
+      if(previousSubject!==binding.subjectId){
+        this.relationshipAssessments.clearModels(scope);
+        if(this.state(scope).version>0)this.bump(scope);
+      }
       this.rebuildDerived(scope,nowMs);
       return {...context,bindingId:binding.bindingId,subjectId:binding.subjectId,createdAtMs:binding.createdAtMs};
     });
@@ -853,7 +857,7 @@ export class SceneAuthority {
     }
     return changed;
   }
-  private transaction<T>(action:()=>T):T {
+  transaction<T>(action:()=>T):T {
     const savepoint=`scene_authority_${++this.savepointSequence}`;
     const outer=!this.db.isTransaction;
     this.db.exec(outer?'BEGIN IMMEDIATE':`SAVEPOINT ${savepoint}`);

@@ -35,6 +35,18 @@ function reviewOf(document){
     currentLife:document.lifeBeforeMeeting?.currentLife??null,relationship:document.initialUserRelation??null,
     interaction:document.interaction??null,aspirations:document.aspirations??[],completionSlots:document.completion.slots,document};
 }
+function locationOf(value){
+  if(value===undefined)return {status:'unavailable'};
+  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('invalid_onboarding_location');
+  if(value.status==='denied'||value.status==='unavailable')return {status:value.status};
+  if(value.status!=='granted')throw new Error('invalid_onboarding_location');
+  const {latitude,longitude,accuracyMeters,observedAtMs}=value;
+  const now=Date.now();
+  if(!Number.isFinite(latitude)||latitude < -90||latitude > 90||!Number.isFinite(longitude)||longitude < -180||longitude > 180||
+    !Number.isFinite(accuracyMeters)||accuracyMeters < 0||accuracyMeters > 100_000||!Number.isSafeInteger(observedAtMs)||
+    observedAtMs < 0||observedAtMs > now+300_000)throw new Error('invalid_onboarding_location');
+  return {status:'granted',latitude,longitude,accuracyMeters,observedAtMs};
+}
 function response(res,status,value){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(value));}
 async function bodyOf(request){
   if(request.headers['content-type']?.split(';')[0]!=='application/json')throw new Error('invalid_content_type');
@@ -44,7 +56,7 @@ async function bodyOf(request){
 }
 
 /** The browser presents a selection; the existing preset authority remains the only writer. */
-export async function startCompanionOnboarding({runtime,scope,openBrowser=()=>{},timeoutMs=30*60_000}){
+export async function startCompanionOnboarding({runtime,scope,subjectId,openBrowser=()=>{},timeoutMs=30*60_000}){
   if(!scope||typeof scope!=='object')throw new Error('invalid_scope');
   const existing=runtime.companionPreset(scope);
   if(existing)return {url:null,result:Promise.resolve({status:'existing',scope,selection:{kind:'existing',presetId:existing.presetId,
@@ -100,9 +112,9 @@ export async function startCompanionOnboarding({runtime,scope,openBrowser=()=>{}
         const input=await bodyOf(request);
         if(finished)throw new Error('onboarding_finished');
         if(!previewed||input?.selectionToken!==previewed.token)throw new Error('selection_needs_preview');
-        const selected=previewed;previewed=null;
+        const selected=previewed;const location=locationOf(input.location);previewed=null;
         const imported=runtime.importCompanionPreset(scope,selected.document,{expectedVersion:selected.preview.expectedVersion,
-          previewId:selected.preview.previewId,operationId:randomUUID()});
+          previewId:selected.preview.previewId,operationId:randomUUID()},location,subjectId);
         const output={status:'selected',scope,selection:{kind:selected.kind,presetId:imported.presetId,
           displayName:selected.preview.displayName,characterId:imported.characterId,...(selected.file?{file:selected.file}:{})},
           import:{status:imported.status,duplicate:imported.duplicate,requiresCompletion:selected.preview.requiresCompletion}};
