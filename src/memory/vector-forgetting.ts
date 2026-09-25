@@ -4,7 +4,7 @@ export type VectorPrecision = 32 | 8 | 4;
 
 /** Precision follows the current authorized layer, never age alone. */
 export function vectorPrecision(memory:Memory,view:MemoryView):VectorPrecision {
-  if(memory.source.reference||memory.protectedFacts.length||
+  if(memory.source.reference||memory.protectedFacts.length||view.emotionalReaction||
     (memory.retention?.kind!=='peripheral'&&!memory.accessOverride))return 32;
   if(view.access==='gist')return 8;
   if(view.access==='feeling'||view.access==='anchor')return 4;

@@ -67,7 +67,8 @@ const MAX_QUOTE_LENGTH = 4_000;
  * Validate model candidates against already-filtered perspective observations.
  * A roster entry or bare name mention cannot establish a relationship.
  */
-export function validateRelationships(value: unknown, context: SceneRelationshipContext): DirectionalRelationship[] {
+export function validateRelationships(value: unknown, context: SceneRelationshipContext,
+  options:{ignoreValidatedZeroDelta?:boolean}={}): DirectionalRelationship[] {
   const checked = checkedContext(context);
   if (!Array.isArray(value) || value.length > MAX_RELATIONSHIPS) throw new Error('invalid_relationships');
   const observations = new Map(checked.observations.map(observation => [observation.id, observation]));
@@ -97,8 +98,9 @@ export function validateRelationships(value: unknown, context: SceneRelationship
     if (!pairs.every(pair => targetHasGroundedParticipation(pair.observation!, pair.quote, targetId, checked))) {
       throw new Error('invalid_relationship_target');
     }
-    const delta = relationshipDelta(input.delta);
+    const delta = relationshipDelta(input.delta,options.ignoreValidatedZeroDelta===true);
     ids.add(id); targets.add(targetId);
+    if(options.ignoreValidatedZeroDelta===true&&Object.values(delta).every(value=>value===0))continue;
     result.push({id,subjectId,targetId,evidenceObservationIds:evidenceIds,evidenceQuotes,delta});
   }
   return result;
@@ -178,7 +180,7 @@ function targetHasGroundedParticipation(observation: RelationshipObservation, qu
   return [target.name,...target.aliases].some(label => quote.includes(label));
 }
 
-function relationshipDelta(value: unknown): RelationshipDelta {
+function relationshipDelta(value: unknown,allowZero=false): RelationshipDelta {
   const input = record(value,'invalid_relationship_delta');
   if (Object.keys(input).some(key => !['depth','trust','valence'].includes(key))) throw new Error('invalid_relationship_delta');
   const delta:RelationshipDelta = {};
@@ -189,7 +191,7 @@ function relationshipDelta(value: unknown): RelationshipDelta {
     }
     delta[key] = input[key];
   }
-  if (!Object.keys(delta).length || !Object.values(delta).some(value => value !== 0)) throw new Error('invalid_relationship_delta');
+  if (!Object.keys(delta).length || (!allowZero&&!Object.values(delta).some(value => value !== 0))) throw new Error('invalid_relationship_delta');
   return delta;
 }
 

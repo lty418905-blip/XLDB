@@ -1,7 +1,7 @@
 {
   "format": 1,
   "kind": "xldb-agent",
-  "version": "0.1.2-mvp",
+  "version": "0.1.3-mvp",
   "files": [
     {
       "file": ".agents/skills/xldb-agent/SKILL.md",
@@ -105,7 +105,7 @@
     },
     {
       "file": "package.json",
-      "sha256": "a5ebdeb4f4b4bdc1b374c1c052bade120614131976f919aa15ed0c2aa3b189d3",
+      "sha256": "3c5303f7bbc2d8303bdd35064ae351539ef50f6d5a62d9521d57fec1df1ce740",
       "bytes": 290
     },
     {
@@ -160,13 +160,13 @@
     },
     {
       "file": "src/agent/runtime.ts",
-      "sha256": "4be36aef6df86a5eaddac8cbd16d3d47c81b91e100c7f0a44551b0735d1847bb",
-      "bytes": 52257
+      "sha256": "70bd1bda61c695a16ffac5e643a7020241a6768fe10cf2ed61ce8e5d8a0f618c",
+      "bytes": 52340
     },
     {
       "file": "src/commitments/codec.ts",
-      "sha256": "07d87c03687d87f5f6d8f8632dfb3a62db0d5c0db2bc519232fd89d6a34b42dd",
-      "bytes": 35222
+      "sha256": "c7f6c491d5bbb758aae1f998f7a493ca497209b47e6e89560ab74262a26df13e",
+      "bytes": 37448
     },
     {
       "file": "src/commitments/contact.ts",
@@ -174,24 +174,29 @@
       "bytes": 5470
     },
     {
+      "file": "src/commitments/display.ts",
+      "sha256": "324c58703552c43a86d435071a9c69c8f0fe4f1c9887e5f78c6763d99a0aeb07",
+      "bytes": 1746
+    },
+    {
       "file": "src/commitments/index.ts",
-      "sha256": "d337831d185dec9e2c7db69aaa62232c11ff67b446ae2ab1ec32d9394b8b0a3a",
-      "bytes": 369
+      "sha256": "242137027feff28e072a391516c761e03a4dcc0dbf21fa9eb86f7e860428c4d7",
+      "bytes": 421
     },
     {
       "file": "src/commitments/store.ts",
-      "sha256": "b7e0e7a9c04f3838e9abfc2c3ecda7750bc072e1e1fb4d50e281c3d3ff45dcf9",
-      "bytes": 18189
+      "sha256": "35b0f0e8fa081fa6992e5307c33a9061563b244dbedca66772b73aeb38b1a337",
+      "bytes": 20550
     },
     {
       "file": "src/commitments/time.ts",
-      "sha256": "9dba40c59b1c9e7153a0ce48798ba86bf9f765e6fd90408fdba235b877147de8",
-      "bytes": 5928
+      "sha256": "e42640abc3de471de1da39a9f9c3bcfb3182da53afd2b23fa77eca1b74533d27",
+      "bytes": 6637
     },
     {
       "file": "src/commitments/types.ts",
-      "sha256": "3abc4bab1765c3f462720a64a12c9560953b336757c94b254df2128f17b5438a",
-      "bytes": 6393
+      "sha256": "7d581d311954cfe56d0f8590f8963ee0ababd5d2c5a4a1f08d245285f38b7f37",
+      "bytes": 6608
     },
     {
       "file": "src/common/geography-background.ts",
@@ -200,13 +205,13 @@
     },
     {
       "file": "src/common/geography.ts",
-      "sha256": "dbf68265e40111c3272a9278a4941681463db82c478a1b35403f108484e748d3",
-      "bytes": 71073
+      "sha256": "78ef815fd5a13e2e0b29b20bbc23a96a1286c3a61bbc80f8eb82793dd31bda13",
+      "bytes": 76898
     },
     {
       "file": "src/common/physiology.ts",
-      "sha256": "6b5bfdcf000f0ea483c738bf499d8aad862380eb8821c1e76a5290f96e5d3ae2",
-      "bytes": 31224
+      "sha256": "e436c0908efab954530a6c8018c72639ea4485e61f1b64ed69167104124f704e",
+      "bytes": 36426
     },
     {
       "file": "src/common/state-types.ts",
@@ -215,8 +220,8 @@
     },
     {
       "file": "src/companion/agentjev.ts",
-      "sha256": "3b323d4220524602ebe55a028822460c26f2aa98b50aecc4ebb6d6e4391d62b3",
-      "bytes": 29760
+      "sha256": "7a3c71004f03ff3b582562facdb9de1579c7ed0be479bb0de2ff324e9a2eff41",
+      "bytes": 31070
     },
     {
       "file": "src/companion/codec.ts",
@@ -225,8 +230,8 @@
     },
     {
       "file": "src/companion/contact-context.ts",
-      "sha256": "d3037f4f4fb70aadf00a4faa2b4e68052848bd2d14c7b7f9139aed54ff1143c0",
-      "bytes": 7955
+      "sha256": "9ee7d77def725e9c722aa1c19c2e178468c4b37d0be35d17c5f95dd5430c41fc",
+      "bytes": 9709
     },
     {
       "file": "src/companion/identity-expression.ts",
@@ -245,8 +250,8 @@
     },
     {
       "file": "src/companion/learning-executor.ts",
-      "sha256": "4b18724185fdb71344a3bb7d7d6c25667385129573235993d760e0d0f9d22fb3",
-      "bytes": 2860
+      "sha256": "51371b085c2d01ab695b8e314def001c5c82f94351d9d36f96689df98000bdde",
+      "bytes": 3454
     },
     {
       "file": "src/companion/learning-worker.ts",
@@ -255,13 +260,13 @@
     },
     {
       "file": "src/companion/personal-learning.ts",
-      "sha256": "dd2f85d094a8e12c905fbe585c6a6a3e06da1be114567c40efaeb1e6cce5edcb",
-      "bytes": 14519
+      "sha256": "6bffeb6ff45a0111b89e35a9cbc95bf34807947e6bad24f28b3d0b0e104e035c",
+      "bytes": 16998
     },
     {
       "file": "src/companion/personal-weights.ts",
-      "sha256": "658335eabf0b65119b8d954f16e84701fefc27866a63ca0b6dc34098ef39ee87",
-      "bytes": 23233
+      "sha256": "7bee65b84170c1fb72ca5a19821a861b6778dc88aa5b65b4bce8b9b28752a87c",
+      "bytes": 25801
     },
     {
       "file": "src/companion/presets.ts",
@@ -270,8 +275,8 @@
     },
     {
       "file": "src/companion/relationship-assessment.ts",
-      "sha256": "8bfc4bc15f396c30c8c1c183c828284e9876959e56afb3dcccca950e24c86fb1",
-      "bytes": 23786
+      "sha256": "59d714324435fde912b8b181a6b5ecc212e615cfb88cbca7139cb95ac3fbecd1",
+      "bytes": 24679
     },
     {
       "file": "src/companion/relationship-context.ts",
@@ -280,8 +285,8 @@
     },
     {
       "file": "src/companion/relationship-evidence.ts",
-      "sha256": "637517adbc635dc6d0dfbe0d62204f484f850e299fc2c8fc561737db2aea1e0f",
-      "bytes": 17369
+      "sha256": "2d7160596a72b0cb386b82f89e40877b94eaba39350b4a015b9febad597afe07",
+      "bytes": 26044
     },
     {
       "file": "src/companion/store.ts",
@@ -319,14 +324,34 @@
       "bytes": 7615
     },
     {
+      "file": "src/core/model-catalog.ts",
+      "sha256": "f25bae7a1a239eb55bfbeaa51a48021ed8c255edd9eacff2566804717ecd5b03",
+      "bytes": 2787
+    },
+    {
       "file": "src/core/models.ts",
-      "sha256": "dd4115276484f5787b3d37f25178ea2a333c862ea4ace96bb6e233f1998ec49d",
-      "bytes": 42998
+      "sha256": "16dd74d8525dd005b157e599b40339d96712fd2d839cb2ca1c92fee1aa473aac",
+      "bytes": 57289
+    },
+    {
+      "file": "src/core/role-observation.ts",
+      "sha256": "deca1f809d6ef6e72600b5a62030fd0b07643f33322dd7e7864cb852bc09f1df",
+      "bytes": 2106
+    },
+    {
+      "file": "src/core/runtime-log.ts",
+      "sha256": "ffe40594e59eda94679b539b90ad9a165b25735b602ebd990ee6c19f8d0f366c",
+      "bytes": 9129
+    },
+    {
+      "file": "src/core/scene-observation.ts",
+      "sha256": "4d5ef704f05b2f520a03a881a95860cb2b3be25b5db59330a12f51aa3412e30b",
+      "bytes": 2611
     },
     {
       "file": "src/core/service.ts",
-      "sha256": "adabeca4adbd3758a5d4bab082eccfb94c8023d606fca20c902433fb185d66f4",
-      "bytes": 10403
+      "sha256": "cf7033a17f02b8609beecaffc730f3dff221edcaa7c9f9b830f2d066e9842733",
+      "bytes": 14025
     },
     {
       "file": "src/core/store.ts",
@@ -354,39 +379,44 @@
       "bytes": 8188
     },
     {
+      "file": "src/emotion/expression.ts",
+      "sha256": "f3e5d5c63be426809cd28e45d6f1ed40212438c0ae2b27a6562de813aae481dc",
+      "bytes": 8278
+    },
+    {
       "file": "src/emotion/neural.ts",
       "sha256": "d916f7f50e5ac8f2d2648b96fdad0c10446493a78826e9f6c4ff0f291c6fdc77",
       "bytes": 22146
     },
     {
       "file": "src/emotion/openher.ts",
-      "sha256": "4266c6c6e079bb267aadea1c7bdfd59881f3d02d3f74ea12d29341b00702db08",
-      "bytes": 19559
+      "sha256": "313db96015faa7ae2ff24d9ccd36c38f956c1ce1ff735731dcc7126ae623a961",
+      "bytes": 24111
     },
     {
       "file": "src/emotion/relationships.ts",
-      "sha256": "d462faeb30e4e38e16b6e34c8c2b94df5bcd315ab470ec14e3180b42484b12f6",
-      "bytes": 12664
+      "sha256": "f36a30f02ba6fc3f790e174f0b2d256a67376bb405e7e8bbad83ec954c194f58",
+      "bytes": 12887
     },
     {
       "file": "src/memory/access.ts",
-      "sha256": "c48c23db04929378e12a71d1feac002aa9e04fad4680556c680dd6c27bfc19c4",
-      "bytes": 8858
+      "sha256": "d63b7704e08c3419dc2cdd2f18fae6ef7d1058239934face97aee9b26eef876a",
+      "bytes": 9219
     },
     {
       "file": "src/memory/context.ts",
-      "sha256": "a2cd6feea13cb0cf8c71702001cd6de786d300458f229a36d91f6f0328d73b6f",
-      "bytes": 3180
+      "sha256": "6061e3cf162b34a84b9ea73f6825c151485b9c3e47f1e61ec5a086b21c9446e1",
+      "bytes": 3647
     },
     {
       "file": "src/memory/retention.ts",
-      "sha256": "4e7ed30ed4f55fa598813e433709b1a58b27ad459d943d8d2d938bcf1678a520",
-      "bytes": 5015
+      "sha256": "74f4fe16da73502e06e1eb7da0be1e63d94a7f88fb4b15c4c62da7fb509251d1",
+      "bytes": 7745
     },
     {
       "file": "src/memory/retrieval.ts",
-      "sha256": "d19ba6e2e0b0b4a080e4266ffaa6a42a44bfeea2e69c506f8e7b1a56edac9ea1",
-      "bytes": 26932
+      "sha256": "b250e250121a67171975f8900d550626f74d319d3875c995a486da2fbcbdba5b",
+      "bytes": 30693
     },
     {
       "file": "src/memory/tokenizer.ts",
@@ -395,13 +425,13 @@
     },
     {
       "file": "src/memory/vector-forgetting.ts",
-      "sha256": "d3108b8618cf92d0b66570e23cf00f9080c6f203b045f9c8659918b669ed302a",
-      "bytes": 967
+      "sha256": "628c49b7dede89ff26bb790fd4ddee67311cba5052ddd6be42017aaa2dd232fa",
+      "bytes": 991
     },
     {
       "file": "src/scene/address.ts",
-      "sha256": "f618cc386b67dfcb4a4b8296c297224309b6cbb596990dd3a3049983fe10fd72",
-      "bytes": 3399
+      "sha256": "a6a6d168e4d70587a39c7be33290eb54c4d237d4b61f2366084ab82bbbf78795",
+      "bytes": 4684
     },
     {
       "file": "src/scene/backup.ts",
@@ -409,19 +439,34 @@
       "bytes": 44902
     },
     {
+      "file": "src/scene/calendar-store.ts",
+      "sha256": "cd5fa1920d5880b5e646105db8e28a5b71d9d5db013ae7a77bf222c726e82416",
+      "bytes": 15769
+    },
+    {
+      "file": "src/scene/calendar.ts",
+      "sha256": "07a1be92411262efa49c50567c7232ffca9908949205553aa0a77ab7bcad67f1",
+      "bytes": 13313
+    },
+    {
       "file": "src/scene/companion-flow.ts",
-      "sha256": "3d918fa15b74977c90dd017d9a7ab51f6da22e5ecfa9e85cae277742a7febe39",
-      "bytes": 34687
+      "sha256": "b2d371dd182bf1edbebecbb7bf68c4c1eee71b89ccf3d3ef060073b562356cf0",
+      "bytes": 33701
     },
     {
       "file": "src/scene/dashboard.ts",
-      "sha256": "ca06e5192a11a0d7eed90f2c2fe4b9825beabc2fd353935abeaa1972dcec2816",
-      "bytes": 1160
+      "sha256": "60c2346adaf314874b07c17d1fcde5416b759a15daa8c8fbb65d52071cc3e6bb",
+      "bytes": 3792
     },
     {
       "file": "src/scene/director.ts",
-      "sha256": "f4c6e4d3a7d951aacbbe1e590c489cd16eefa6a6777db75a4a16cc9fcd768e7b",
-      "bytes": 7071
+      "sha256": "460aad687d527edd2df6655a2ad1affb31871a407988cf1ec9f9010b6cb74cd2",
+      "bytes": 30491
+    },
+    {
+      "file": "src/scene/emotion-scheduler.ts",
+      "sha256": "869e6ac7a62c363888fc0df9bcd50d775b3f26438109d711ad41f30d90d914da",
+      "bytes": 10888
     },
     {
       "file": "src/scene/extraction.ts",
@@ -429,14 +474,19 @@
       "bytes": 9074
     },
     {
+      "file": "src/scene/generation-view.ts",
+      "sha256": "c4e7a538b406d30c7068a3cc43452eb431fc4d7d72b3021a5d77fb8b0b0ea6c7",
+      "bytes": 850
+    },
+    {
       "file": "src/scene/identities.ts",
-      "sha256": "41ff1966a39d192f6add1e62e8d04d0cf3c0e6c6dc86566635d8051b871bf79f",
-      "bytes": 27307
+      "sha256": "c066deb82d35821d4e9e8b74be5e883c5d7b72637469caa1a27622eb132e222f",
+      "bytes": 28127
     },
     {
       "file": "src/scene/initialization.ts",
-      "sha256": "cba8f1283f35d34b3248c7a68ff6ab9fd79f544cd974b884533596feb4d9f3fe",
-      "bytes": 37870
+      "sha256": "c2f8385473651dee1fe3ce5b4e460ac7fd8039cee359a5e1309e4153ab70fc54",
+      "bytes": 47892
     },
     {
       "file": "src/scene/interaction.ts",
@@ -445,8 +495,8 @@
     },
     {
       "file": "src/scene/lifecycle.ts",
-      "sha256": "dbabbf61665a3e423f1c5d244f5427b77584de011521649b6876d6b974f95c99",
-      "bytes": 26330
+      "sha256": "a9dd4ec7e6d55724175ca03a53423dae8d50255e8ea885776a2841a5aa3b7c78",
+      "bytes": 27022
     },
     {
       "file": "src/scene/outward.ts",
@@ -460,8 +510,8 @@
     },
     {
       "file": "src/scene/processing.ts",
-      "sha256": "bbcd9058b26ede49b4fdc4ae17c62ea39af5a16a68d865ab7ee9683b42fb05cc",
-      "bytes": 11218
+      "sha256": "61df4277ff1ac646412b56823a05464e697c42596dcba96fc724833dca37ea41",
+      "bytes": 16945
     },
     {
       "file": "src/scene/resources.ts",
@@ -469,29 +519,39 @@
       "bytes": 11914
     },
     {
+      "file": "src/scene/schedule-conflicts.ts",
+      "sha256": "9082fbfcedfff28f839d0c09204f807b9c6910d82f8574fe389cf4abade8a544",
+      "bytes": 11540
+    },
+    {
       "file": "src/scene/service.ts",
-      "sha256": "b0c127ed77325d92079daaf76f796a5aad4fa8ee5a35695c5b84fa88ccf3af1d",
-      "bytes": 71620
+      "sha256": "b781928cf1870232c6c98576e0aa2928e685d284fb0f50e65f73f8cbe9c7cfb3",
+      "bytes": 109059
     },
     {
       "file": "src/scene/store.ts",
-      "sha256": "b7d1818f2503e2cc12bd00f552e878c452e6617fd6580fa4ed60184bd904a4bf",
-      "bytes": 67679
+      "sha256": "9c4041fd39d40ac60fbcb8a938ffb8e447495ffc8a106c0db01d6b2b3a9ed28f",
+      "bytes": 78387
+    },
+    {
+      "file": "src/scene/story-initial-clock.ts",
+      "sha256": "e7b1ed219485cc49213723af0f3252f4f8a1333b91ed8eea06eb80e0f213e232",
+      "bytes": 5231
     },
     {
       "file": "src/scene/transfer.ts",
-      "sha256": "76fce9afab825223ce2629cc2056bfedb7781ee997052a2f8c759816251e11a5",
-      "bytes": 27725
+      "sha256": "a977d9556ad3aaeab50c0e0266de9eeb3a8d6332f40c83ede563784596c73c3a",
+      "bytes": 27926
     },
     {
       "file": "src/scene/types.ts",
-      "sha256": "ce682cd05ee7919af99d82f7f9a0c10dbd514551fa0c2c9ff14a09fc5cdac543",
-      "bytes": 5910
+      "sha256": "5dedcc0742a6700cae1438e4becb5b945ad5e182e953d518871766aac7d670b7",
+      "bytes": 6934
     },
     {
       "file": "src/scene/views.ts",
-      "sha256": "fb6d94106f04ed88284f295b554a42742c023cda11b48801f31f2054cb4660b6",
-      "bytes": 12137
+      "sha256": "6b13d4f451a7af67a04690b4ef9c11146ceaafc6b3cdeed3c8c0271597d1658e",
+      "bytes": 14199
     },
     {
       "file": "src/scene/workbench.ts",

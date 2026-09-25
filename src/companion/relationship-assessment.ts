@@ -30,9 +30,15 @@ export interface RelationshipEvidence {sourceId:string;revision:number;quote:str
 export interface RelationshipMetricValue {
   score:number|null;confidence:RelationshipConfidence;rationale:string;evidence:RelationshipEvidence[];
   corrected?:boolean;origin?:'evidence_rule'|'agentjev_constrained'|'user_correction';
-  domains?:Array<{domain:string;status?:'current'|'historical'|'conflicted';levels:number[];evidence:RelationshipEvidence[];qualifiers?:string[]}>;
+  domains?:Array<{domain:string;status?:'current'|'historical'|'conflicted';score?:number|null;
+    levels:number[];evidence:RelationshipEvidence[];qualifiers?:string[]}>;
 }
 export type RelationshipMetrics = Record<RelationshipMetric,RelationshipMetricValue>;
+/** A present distance boundary and present care can coexist; one score would erase either fact. */
+export function hasOpposingDistanceAndCare(items:readonly {eventKind:string}[]):boolean {
+  return items.some(item=>item.eventKind==='distance_boundary')&&
+    items.some(item=>item.eventKind==='explicit_care'||item.eventKind==='mutual_closeness');
+}
 export interface RelationshipAssessment {
   schema:'xldb-relationship-assessment-v2';scope:SceneScope;subjectId:string;characterId:string;
   sourceVersion:number;controlsRevision:number;sourceFingerprint:string;revision:number;
@@ -51,6 +57,7 @@ export interface RelationshipCorrection {
 interface AssessmentRow {fingerprint:string;revision:number;model:string|null;correction:string|null}
 
 const SCHEMA='xldb-relationship-assessment-v2';
+const DECISION_VERSION='relationship-boolean-support-v2';
 type NormalizedInput=RelationshipAssessmentInput&{sourceFingerprint:string};
 
 /** One projection per real-user / companion / scene scope. The scene remains the source authority. */
@@ -114,7 +121,7 @@ export class RelationshipAssessmentStore {
     const current=normalize(input,this.providerIdentity),row=this.row(current);
     if(!row?.model||row.fingerprint!==current.sourceFingerprint)return null;
     const model=JSON.parse(row.model) as ReturnType<typeof decodeModel>;
-    return {evaluationVersion:RELATIONSHIP_EVALUATION_VERSION,sourceFingerprint:current.sourceFingerprint,
+    return {evaluationVersion:`${RELATIONSHIP_EVALUATION_VERSION}+${DECISION_VERSION}`,sourceFingerprint:current.sourceFingerprint,
       extraction:model.extraction,rawDiagnostics:model.rawDiagnostics??null};
   }
 
@@ -200,10 +207,9 @@ export function relationshipExpression(value:RelationshipAssessment|null,purpose
     const candidates=item.corrected||!item.domains?.length
       ?item.score===null?[]:[{domain:'当前适用范围',score:item.score}]
       :item.domains.flatMap(domain=>{
-        if(domain.status!=='current'||!domain.levels.length)return [];
-        const levels=[...new Set(domain.levels)];
-        const compatible=(metric==='agentToUserIntimacy'||metric==='userToAgentIntimacy')&&levels.every(level=>level>=2&&level<=4);
-        return levels.length===1||compatible?[{domain:domain.domain,score:Math.max(...levels)}]:[];
+        if(domain.status!=='current')return [];
+        const score=domain.score===undefined?(domain.levels.length===1?domain.levels[0]:null):domain.score;
+        return score===null?[]:[{domain:domain.domain,score}];
       });
     return candidates.slice(0,3).map(({domain,score})=>({metric,domain,score,
       suggestion:guidance[metric][score],basis:item.corrected?'用户纠正':'有来源的关系线索'}));
@@ -242,7 +248,7 @@ function decodeModel(raw:unknown,input:NormalizedInput){
   let value:unknown=raw;
   if(typeof value==='string'){try{value=JSON.parse(value);}catch{throw new Error('invalid_relationship_assessment');}}
   if(!record(value)||value.schema!==SCHEMA||!record(value.extraction))throw new Error('invalid_relationship_assessment');
-  const extraction=decodeRelationshipEvidence(value.extraction,input) as RelationshipEvidenceExtraction;
+  const extraction=decodeRelationshipEvidence(value.extraction,input,{allowLegacy:false}) as RelationshipEvidenceExtraction;
   const projected=projectRelationshipEvidence(extraction,input),metrics=projected.metrics;
   if(value.selections!==undefined){
     if(!record(value.selections))throw new Error('invalid_relationship_selection');
@@ -250,8 +256,14 @@ function decodeModel(raw:unknown,input:NormalizedInput){
       const ambiguity=projected.ambiguous[key as RelationshipMetric];
       if(!ambiguity||!Number.isInteger(selected)||!ambiguity.levels.includes(selected as number))
         throw new Error('invalid_relationship_selection');
+      if(hasOpposingDistanceAndCare(ambiguity.items))throw new Error('invalid_relationship_selection');
+      const domain=ambiguity.items[0]?.domain;
+      const domains=metrics[key as RelationshipMetric].domains?.map(item=>
+        item.domain===domain&&item.status==='current'?{...item,score:selected as number}:item);
+      if(!domain||domains?.filter(item=>item.domain===domain&&item.status==='current'&&
+        item.score===selected).length!==1)throw new Error('invalid_relationship_selection');
       const evidence=ambiguity.items.slice(0,5).map(item=>({sourceId:item.ref.sourceId,revision:item.ref.revision,quote:item.ref.quote}));
-      metrics[key as RelationshipMetric]={...metrics[key as RelationshipMetric],score:selected as number,evidence,
+      metrics[key as RelationshipMetric]={...metrics[key as RelationshipMetric],score:selected as number,evidence,domains,
         origin:'agentjev_constrained',rationale:'同一行为片段的多个有依据解释经本地模型约束排序'};
     }
   }
@@ -299,6 +311,7 @@ function normalize(input:RelationshipAssessmentInput,providerIdentity:string):No
   const normalized={scope,subjectId,characterId,sourceVersion:input.sourceVersion,controlsRevision:input.controlsRevision,
     sources,openHerSummary,auxiliaryContext,personalParameterVersion:input.personalParameterVersion??0};
   return {...normalized,sourceFingerprint:createHash('sha256').update(JSON.stringify({version:RELATIONSHIP_EVALUATION_VERSION,
+    decisionVersion:DECISION_VERSION,
     prompt:RELATIONSHIP_EVIDENCE_PROMPT_HASH,
     providerIdentity,...normalized,auxiliaryContext:relationshipContextFingerprint(auxiliaryContext)})).digest('hex')};
 }

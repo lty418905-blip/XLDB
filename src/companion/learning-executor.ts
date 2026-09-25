@@ -35,7 +35,20 @@ export async function processLearningQueue(db:DatabaseSync,options:{
         }catch(error){db.exec('ROLLBACK');throw error;}
         continue;
       }
+      if(job.jobKey.startsWith('relationship-train:')){
+        const {modelIdentity}=JSON.parse(job.payload) as {modelIdentity:string};
+        db.exec('BEGIN IMMEDIATE');
+        try{
+          assertActive();
+          if(learning.jobCurrent(job))weights.train(job.scopeKey,'relationship',modelIdentity,assertActive);
+          learning.finishJob(job);assertActive();db.exec('COMMIT');completed++;
+        }catch(error){db.exec('ROLLBACK');throw error;}
+        continue;
+      }
       const payload=JSON.parse(job.payload) as RelationshipPayload;
+      if(!job.jobKey.startsWith('relationship-binary-v4:')){
+        learning.finishJob(job);continue;
+      }
       if(!learning.jobCurrent(job,payload.sourceId,payload.sourceRevision)){
         learning.finishJob(job);continue;
       }

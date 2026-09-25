@@ -1,5 +1,5 @@
 import type {Retention,SemanticCue} from './retention.ts';
-import {retainedAccess,withoutDirectCopy} from './retention.ts';
+import {retainedAccess,withoutDirectCopy,protectedEmotionalReaction,protectedFeeling} from './retention.ts';
 export {directlyCopiesPreciseText,withoutDirectCopy} from './retention.ts';
 
 export interface Scope {
@@ -66,6 +66,8 @@ export interface MemorySnapshot {
 }
 
 export interface MemoryView {
+  /** A remembered reaction, never an assertion about current mood or objective history. */
+  emotionalReaction?:NonNullable<ReturnType<typeof protectedEmotionalReaction>>;
   reactivated?:boolean;
   reactivation?:{kind:'semantic';cue:string;basis:string};
   id: string;
@@ -169,6 +171,8 @@ export function projectMemories(
       default:
         throw new Error('invalid_access');
     }
+    const reaction=protectedEmotionalReaction(memory);
+    if(reaction){view.emotionalReaction=reaction;view.feeling=protectedFeeling(memory);}
     memories.push(view);
   }
   return {

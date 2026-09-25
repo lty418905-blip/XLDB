@@ -1,17 +1,32 @@
 import type {Access,Memory,MemorySnapshot} from './access.ts';
 
+export const emotionalReactions = {
+  joy:'喜悦', gratitude:'感激', affection:'爱意', relief:'如释重负', pride:'自豪',
+  sadness:'悲伤', grief:'悲痛', hurt:'委屈', anger:'愤怒', fear:'恐惧',
+  worry:'担忧', shame:'羞耻', guilt:'内疚', disappointment:'失望',
+  jealousy:'嫉妒', longing:'思念', loneliness:'孤独', disgust:'厌恶', awe:'震撼',
+} as const;
+export interface EmotionalProtection {
+  reactions:(keyof typeof emotionalReactions)[];
+  intensity:'strong';
+  feelingBasis:'explicit'|'inferred';
+  /** Stored evidence only; never copied into the faded emotional projection. */
+  basisQuote:string;
+}
+
 /** Missing on legacy records means retain, never permission to forget. */
 export interface Retention {
   kind:'retain'|'peripheral';
   basisQuote:string;
   cues:string[];
+  emotionalProtection?:EmotionalProtection;
 }
 
 export function retentionOf(value:unknown,detail:string):Retention|undefined {
   if(value===undefined)return undefined;
   if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('invalid_memory_retention');
   const input=value as Record<string,unknown>;
-  if(Object.keys(input).some(key=>!['kind','basisQuote','cues'].includes(key))||
+  if(Object.keys(input).some(key=>!['kind','basisQuote','cues','emotionalProtection'].includes(key))||
     !['retain','peripheral'].includes(String(input.kind))||typeof input.basisQuote!=='string'||
     !input.basisQuote.trim()||input.basisQuote.length>1000||!detail.includes(input.basisQuote)||
     !Array.isArray(input.cues)||input.cues.length>3)throw new Error('invalid_memory_retention');
@@ -19,7 +34,36 @@ export function retentionOf(value:unknown,detail:string):Retention|undefined {
     if(typeof cue!=='string'||cue.trim().length<4||cue.length>80||!detail.includes(cue))throw new Error('invalid_memory_retention');
     return cue;
   });
-  return {kind:input.kind as Retention['kind'],basisQuote:input.basisQuote,cues:[...new Set(cues)]};
+  const emotionalProtection=emotionalProtectionOf(input.emotionalProtection,detail);
+  return {kind:input.kind as Retention['kind'],basisQuote:input.basisQuote,cues:[...new Set(cues)],
+    ...(emotionalProtection?{emotionalProtection}:{})};
+}
+
+function emotionalProtectionOf(value:unknown,detail:string):EmotionalProtection|undefined {
+  if(value===undefined)return undefined;
+  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('invalid_memory_retention');
+  const input=value as Record<string,unknown>;
+  if(Object.keys(input).some(key=>!['reactions','intensity','feelingBasis','basisQuote'].includes(key))||
+    input.intensity!=='strong'||!['explicit','inferred'].includes(String(input.feelingBasis))||
+    !Array.isArray(input.reactions)||input.reactions.length<1||input.reactions.length>3||
+    input.reactions.some(key=>typeof key!=='string'||!Object.hasOwn(emotionalReactions,key))||
+    typeof input.basisQuote!=='string'||!input.basisQuote.trim()||input.basisQuote.length>1000||
+    !detail.includes(input.basisQuote))throw new Error('invalid_memory_retention');
+  return {reactions:[...new Set(input.reactions)] as EmotionalProtection['reactions'],intensity:'strong',
+    feelingBasis:input.feelingBasis as EmotionalProtection['feelingBasis'],basisQuote:input.basisQuote};
+}
+
+/** Protect the reaction, not the event's precise words or the character's current mood. */
+export function protectedEmotionalReaction(memory:Memory) {
+  const value=memory.retention?.emotionalProtection;
+  if(!value||memory.kind!=='episode'||!memory.episode||memory.access==='hidden'||memory.access==='anchor')return undefined;
+  const checked=emotionalProtectionOf(value,memory.detail)!;
+  return {reactions:[...checked.reactions],intensity:checked.intensity,feelingBasis:checked.feelingBasis};
+}
+
+export function protectedFeeling(memory:Memory):string|undefined {
+  const value=protectedEmotionalReaction(memory);
+  return value?`仍清楚记得当时强烈的${value.reactions.map(key=>emotionalReactions[key]).join('、')}。${value.feelingBasis==='inferred'?'这是当时的主观情绪推断。':''}`:undefined;
 }
 
 const DAY=86_400_000;
@@ -28,7 +72,7 @@ const DIRECT_CODE_RUN=4;
 const conservativeCoarse={
   gist:'记得曾发生过一件事，但具体内容已经模糊。',
   feeling:'这段经历仍留下感觉，但具体感受已经模糊。',
-  anchor:'仍记得这是一件重要的经历。',
+  anchor:'仍记得发生过一件事。',
 } as const;
 
 /** Copy guard shared by the foreground projection and exact-cue decision. */

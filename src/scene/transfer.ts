@@ -141,10 +141,12 @@ export class SceneTransfer {
     });
   }
 
-  preview(scope: SceneScope, document: unknown) {
+  preview(scope: SceneScope, document: unknown, projectedRoster?: SceneRoster) {
     const state = this.authority.state(scope);
     if (!state.version) throw new Error('invalid_scene_not_configured');
-    const normalized = validateDocument(document, state.roster);
+    // Initialization may preview references for NPCs in its reviewed roster.
+    // Apply still validates against the roster committed at that point.
+    const normalized = validateDocument(document, projectedRoster ?? state.roster);
     const documentHash = hash(normalized);
     const previewId = hash({scope:scopeKey(scope),version:state.version,documentHash});
     const conflicts = normalized.format === 'xldb-scene-template-v1'

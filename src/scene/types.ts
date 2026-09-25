@@ -78,10 +78,21 @@ export interface Observation {
   identityEvidence?: {sourceId:string;quote:string;revision?:number}[];
   readers: string[];
 }
-export interface PerspectivePlan { observations: Observation[]; unresolved: string[] }
+export interface PerspectivePlan { observations: Observation[]; unresolved: string[];
+  presentation?: {sentenceCount:number|null;dialogueOnly:boolean|null};
+  generationRequests?: Record<string,string> }
 export interface SceneAnalysis {
   plan: PerspectivePlan;
   characters: Record<string, Analysis>;
+  /** Failed model stages omitted from this accepted source's derived state. */
+  skippedStages?: import('./processing.ts').SkippedStage[];
+  /** Foreground decision for the user turn; assistant replies share its four-NPC budget. */
+  emotionSchedule?: {windowId:string;eligibleIds:string[];selectedIds:string[];forcedIds:string[];deferredIds:string[];
+    method:'agentjev'|'agentjev_guarded'|'deterministic'|'all';reason?:string;modelIdentity?:string};
+  /** Accepted emotion candidates awaiting local OpenHer learning after the foreground commit. */
+  emotionPendingIds?: string[];
+  /** Deferred NPCs whose model candidates were actually analyzed; absent in older placeholder records. */
+  emotionCandidateReadyIds?: string[];
   /** Source-grounded reply expectation for accepted companion assistant text. */
   contactResponseExpectation?: {expected:boolean|null;quote:string|null};
   absenceExplanation?:AbsenceExplanationOperation|null;
@@ -99,6 +110,10 @@ export interface SceneAnalysis {
 export interface StoredSceneAnalysis {
   plan: PerspectivePlan | null;
   characters: Record<string, Analysis>;
+  skippedStages?: SceneAnalysis['skippedStages'];
+  emotionSchedule?: SceneAnalysis['emotionSchedule'];
+  emotionPendingIds?: string[];
+  emotionCandidateReadyIds?: string[];
   contactResponseExpectation?: {expected:boolean|null;quote:string|null};
   absenceExplanation?:AbsenceExplanationOperation|null;
   controlRevision?: number;

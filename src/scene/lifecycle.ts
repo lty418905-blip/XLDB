@@ -4,6 +4,8 @@ import { scopeKey } from '../core/types.ts';
 import type { SceneScope } from './types.ts';
 import {captureReferenceRows,restoreReferenceRows} from './transfer.ts';
 import type {PersistedReferenceRow} from './transfer.ts';
+import {captureCalendarTodoRows,captureCalendarAckRows,restoreCalendarRows} from './calendar-store.ts';
+import type {PersistedCalendarTodoRow,PersistedCalendarAckRow} from './calendar-store.ts';
 
 export interface SceneLifecycleCheckpoint {
   id: string;
@@ -61,6 +63,8 @@ interface SceneCheckpointSnapshot {
   geographyLayouts?: {reader:string;revision:number;body:string}[];
   worldSettings: WorldSettingsRow | null;
   references?:PersistedReferenceRow[];
+  calendarTodos?:PersistedCalendarTodoRow[];
+  calendarReminderAcks?:PersistedCalendarAckRow[];
   companionPreset?:CompanionPresetRow|null;
 }
 
@@ -238,7 +242,9 @@ export class SceneLifecycle {
       FROM scene_companion_presets WHERE scope=?`).get(key) as CompanionPresetRow|undefined;
     return { schema: 1, world, sources, controls, preferenceControls,physiologySettings:physiologySettings??null,physiologyCorrections,
       geographySettings:geographySettings??null,geographyMaps,geographyCorrections,geographyLayouts,
-      references:captureReferenceRows(this.db,scope), worldSettings: settings ?? null,companionPreset:companionPreset??null };
+      references:captureReferenceRows(this.db,scope),calendarTodos:captureCalendarTodoRows(this.db,scope),
+      calendarReminderAcks:captureCalendarAckRows(this.db,scope),
+      worldSettings: settings ?? null,companionPreset:companionPreset??null };
   }
 
   private checkVersion(scope:SceneScope,expectedVersion?:number):void {
@@ -301,6 +307,9 @@ export class SceneLifecycle {
   private insertChildren(key: string, snapshot: SceneCheckpointSnapshot): void {
     const [worldId,sessionId,branchId,characterId]=JSON.parse(key) as string[];
     restoreReferenceRows(this.db,{worldId:worldId!,sessionId:sessionId!,branchId:branchId!,characterId:characterId!},snapshot.references??[]);
+    if(snapshot.calendarTodos!==undefined||snapshot.calendarReminderAcks!==undefined)
+      restoreCalendarRows(this.db,{worldId:worldId!,sessionId:sessionId!,branchId:branchId!,characterId:characterId!},
+        snapshot.calendarTodos??[],snapshot.calendarReminderAcks??[]);
     const insertSource = this.db.prepare(`INSERT INTO scene_sources
       (scope,id,revision,message,observed,status,processing,analysis) VALUES(?,?,?,?,?,?,?,?)`);
     for (const row of snapshot.sources) {

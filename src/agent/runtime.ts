@@ -10,7 +10,7 @@ import type {RetrievalConfig} from '../memory/retrieval.ts';
 import type {SceneScope,SceneMessage,SceneWriteGuard} from '../scene/types.ts';
 import type {HostTask} from './file-host.ts';
 import {sceneWorkbench,correctSceneSource} from '../scene/workbench.ts';
-import {sceneAddressGuidance} from '../scene/address.ts';
+import {sceneExpressionOptions} from '../scene/address.ts';
 import {relationshipContext} from '../emotion/relationships.ts';
 import type {CompanionPresetCompletionTask,CompanionPresetGuard} from '../companion/presets.ts';
 import {decodeProfileReflection} from '../user-model/codec.ts';
@@ -113,7 +113,7 @@ export class AgentRuntime {
             messages:structuredClone(request.messages),responseFormat:'json',isolation:'fresh-context'});
           this.assertOpen();
           if(typeof raw!=='string'||!raw.trim()||raw.length>50_000)throw new Error('relationship_evidence_invalid_response');
-          const decoded=decodeRelationshipEvidence(raw,task);
+          const decoded=decodeRelationshipEvidence(raw,task,{allowLegacy:false});
           return {...decoded,receipt:{provider:'host:relationshipEvidence',calls:1 as const,
             inputCharacters:request.messages[1].content.length,elapsedMs:performance.now()-started}};
         }finally{this.relationshipInFlight--;}
@@ -576,12 +576,13 @@ export class AgentRuntime {
     if(state.sources.some(source=>source.status==='accepted'&&source.processing!=='ready')) throw new Error('invalid_scene_processing');
     const assertCurrent=()=>{this.assertOpen();if(this.authority.scene.state(scope).version!==state.version)throw new Error('context_changed_retry');};
     const decisionNowMs=Date.now();
-    const context=await this.core.contextFrom(this.authority.scene.snapshot(scope,characterId),query,this.config,
-      this.core.scene.companion.contactEmotion(scope,characterId,decisionNowMs,state).emotion,
-      this.authority.scene.preferences(scope,characterId),assertCurrent);
+    const contact=this.core.scene.companion.contactEmotion(scope,characterId,decisionNowMs,state);
     const prior=state.sources.filter(source=>source.status==='accepted'&&source.envelope.targetId===characterId).at(-1);
-    context.context+=sceneAddressGuidance(this.authority.scene,scope,characterId,
-      prior?.envelope??{targetId:characterId,mode:'direct',presentIds:[characterId]},state,context.emotion);
+    const context=await this.core.contextFrom(this.authority.scene.snapshot(scope,characterId),query,this.config,
+      contact.emotion,this.authority.scene.preferences(scope,characterId),assertCurrent,decisionNowMs,
+      sceneExpressionOptions(this.authority.scene,scope,characterId,
+        prior?.envelope??{targetId:characterId,mode:'direct',presentIds:[characterId]},state,
+        contact.emotion,decisionNowMs,contact.affect));
     context.context+=this.authority.scene.worldContext(scope,characterId);
     context.context+=this.authority.scene.physiology.context(scope,characterId);
     context.context+=this.authority.scene.geography.context(scope,characterId);

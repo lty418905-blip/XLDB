@@ -15,16 +15,18 @@ export function extractCommitmentPrompt(input: CommitmentValidationInput): Commi
     system: [
       'Extract only explicit proposals, confirmations of existing proposals, established commitments, revisions, fulfillment, and cancellation.',
       'Classify the current source before matching existing targets. Present facts, completed actions, and preparations do not by themselves create an obligation or accept a proposal. Existing proposals supply reference context only; their presence is not evidence of acceptance. Require the current speaker to explicitly propose, accept, establish, change, or cancel an obligation. An explicit acceptance of a uniquely identified proposal is valid; mere consistency with its expected behavior is not. For fulfillment of an already active finite obligation, a report that its required act is actually complete can be evidence; it cannot retroactively accept a proposed obligation. Return an empty operations array for ordinary memory facts. Do not convert a third party or an addressee into the recipient of the obligation.',
-      '确认existing中status=proposed的提议必须使用action:"confirm"，输出operationId、action、targetId、quote、evidence，以及需要时的targetExcerpt或目标版本/来源引用。不得复制或修改旧content、名单、agreement或term。当前只需提供本轮实际同意者的逐字证据；脚本继承原条款并累计同意，未全部同意仍是提议。不要把这种跨轮确认写成establish。',
-      '修改existing中status=active的约定时，revise只用于当前source逐字包含原约定所需全部同意者的明确同意：mutual需要原participants全部同意，unilateral需要原obligors全部同意；不得继承旧同意。只有player提出新期限或新条款而原obligor尚未同意时，必须使用propose和全新的commitmentId，不能使用revise。真正revise时commitmentId必须与targetId不同。',
+      '确认existing中status=proposed的提议必须使用action:"confirm"，输出operationId、action、targetId、quote、evidence，以及需要时的targetExcerpt或目标版本/来源引用。不得复制或修改旧content、名单、agreement或term。当前只需提供本轮实际同意者的逐字证据；脚本继承原条款并累计同意，未全部同意仍是提议。改约确认只confirm新提议，旧约由脚本自动supersede，不另发cancel。不要把这种跨轮确认写成establish。',
+      '修改existing中status=active的约定时，revise只用于当前source逐字包含原约定所需全部同意者的明确同意：mutual需要原participants全部同意，unilateral需要原obligors全部同意；不得继承旧同意。单方提出改期须用propose、新commitmentId和旧约targetId；旧约在新提议获得所需同意前继续有效。真正revise时commitmentId必须与targetId不同。',
+      '相对改期的content只取本轮quote中的连续原文，例如“改为明天下午四点，地点和事情不变”；不要补写旧任务。targetExcerpt只取本轮quote与旧content共有的逐字短片段，例如“三点”，不要复制本轮未说出的旧全文。',
       '必须逐字提取：content直接复制text中的连续原文，可以直接与quote相同。禁止翻译成英文、转述为第三人称、总结请求或补写内容。quote也必须是text中的连续原文，并完整包含每个evidence.quote；证据不能比quote更长。',
       'Copy quote, evidence.quote, content, deadlineQuote, and reminderQuote verbatim from the source. Do not infer consent, participants, readers, deadlines, or permanence.',
       'unknown means the source gives no usable duration. persistent is only for an explicitly continuing rule with no end condition.',
       'For deadline, return its exact time phrase as deadlineQuote and an optional exact reminder phrase as reminderQuote. Never calculate or return dueAtMs/remindAtMs; the host script computes them from the accepted-source clock. If the phrase is missing or ambiguous, use unknown.',
       'A unilateral commitment lists only its actual obligor. A mutual agreement needs evidence spoken by every participant.',
       'For a direct user source, only userActorId is the speaker; the target NPC is an addressee, not the speaker. Reported third-party speech is not direct consent. For a direct assistant source, only speakerId speaks. Scene speech by another actor requires explicit grounded identity provenance in that observation.',
+      '在已接受的assistant跑团正文中，若叙述逐字明确写出某NPC本人答应了可唯一定位的提议，例如“林舟点头应下”，可以据此对该提议输出confirm；同意不必只出现在引号内的台词。有speakerId时该NPC必须与speakerId相同；无speakerId的scene正文须由当前观察的actorId归属该NPC，并以覆盖同意原文的identityQuote或已核验的identityEvidence证实身份。只写“点头”、记住时间、准备行动、旁人的安心感或行为符合安排都不等于同意。role=user对NPC同意的间接转述不能代替本人同意；场景中NPC的现场直接发言仍须有该观察的明确身份依据identityEvidence，按既有规则处理。',
       '名单必须满足 obligors ⊆ participants ⊆ readers；readers必须同时属于所引观察的合法读者交集。来源role=user时userActorId也是合法读者。unilateral恰好一名obligor。建立mutual约定须每名participant都有其本人逐字同意证据；未同意时仅propose。',
-      'For propose, establish, or revise, every operation MUST include commitmentId, content, nonempty participants, nonempty obligors, nonempty readers, agreement, and term, in addition to operationId/action/quote/evidence. To establish an existing proposal, use its commitmentId and targetId. revise additionally requires targetId naming the existing commitment. fulfill and cancel require targetId. Never output a partial definition; when the source does not support a complete commitment, omit that operation.',
+      'For propose, establish, or revise, every operation MUST include commitmentId, content, nonempty participants, nonempty obligors, nonempty readers, agreement, and term, in addition to operationId/action/quote/evidence. A proposal changing an active commitment uses targetId and keeps its parties and agreement. To establish an existing proposal, use its commitmentId and targetId. revise additionally requires targetId naming the existing commitment. fulfill and cancel require targetId. Never output a partial definition; when the source does not support a complete commitment, omit that operation.',
       'fulfill and cancel apply only to an existing record whose status is active. A proposed record cannot be fulfilled or cancelled; preparation or performance alone does not confirm that proposal. Completion of the specific required act may fulfill an active finite obligation after source and target binding; one compliant act never ends a persistent rule.',
       'A request telling someone what to do is only a proposal unless that obligor explicitly agrees; do not invent their consent. Unknown duration still requires term:{"kind":"unknown"}.',
       'Readers must be limited to principals who can know the cited observation. Return {"operations":[]} only when no grounded operations exist.',
@@ -95,10 +97,11 @@ export function commitmentTransitionTargets(
     const consent=new Set(record.consentActorIds??[]);
     const allowedActions:CommitmentTargetCandidate['allowedActions']=record.status==='proposed'
       ?['confirm']
-      :['revise',...(record.term.kind==='persistent'?[]:['fulfill'] as const),'cancel',
+      :['propose','revise',...(record.term.kind==='persistent'?[]:['fulfill'] as const),'cancel',
         ...(record.mode==='companion'&&record.contactRestriction?.level==='soft'?['harden'] as const:[])];
     return [{
       id:record.id,revision:record.revision,status:record.status,agreement:record.agreement,content:record.content,
+      ...(record.status==='proposed'&&record.replaces?{replaces:record.replaces}:{}),
       participants:[...record.participants],obligors:[...record.obligors],term:record.term,
       ...(record.contactRestriction?{contactRestriction:record.contactRestriction}:{}),
       targetSourceId:record.createdSourceId,targetSourceRevision:record.createdSourceRevision,
@@ -252,7 +255,12 @@ function groundedEvidenceActor(
   if(input.source.role==='user'&&input.userActorId===evidence.actorId)return true;
   if(input.source.role==='assistant'&&input.source.speakerId)return input.source.speakerId===evidence.actorId;
   if(input.source.envelope.mode==='direct')return false;
-  return relevant.some(observation=>observation.actorId===evidence.actorId&&Boolean(observation.identityEvidence?.length)&&quoted(observation));
+  // perspectiveOf has already bound identityQuote to this source and actor;
+  // only assistant scene narration may use that current-source identity path.
+  return relevant.some(observation=>observation.actorId===evidence.actorId&&quoted(observation)&&(
+    Boolean(observation.identityEvidence?.length)||
+    (input.source.role==='assistant'&&typeof observation.identityQuote==='string'&&
+      input.source.text.includes(observation.identityQuote)&&observation.identityQuote.includes(evidence.quote))));
 }
 
 function bindTarget(input:CommitmentValidationInput,candidate:GroundedCandidate):CommitmentTargetCandidate|undefined{
@@ -269,6 +277,11 @@ function bindTarget(input:CommitmentValidationInput,candidate:GroundedCandidate)
   const persistentNoop=target.status==='active'&&target.term.kind==='persistent'&&candidate.action==='fulfill';
   if(!persistentNoop&&!target.allowedActions.includes(candidate.action as CommitmentTargetCandidate['allowedActions'][number]))
     throw new Error('invalid_commitment_target');
+  if(candidate.action==='propose'){
+    if(target.status!=='active'||candidate.commitmentId===target.id||candidate.agreement!==target.agreement||
+      !sameActors(candidate.participants!,target.participants)||!sameActors(candidate.obligors!,target.obligors)||
+      candidate.evidence.some(item=>!target.participants.includes(item.actorId)))throw new Error('invalid_commitment_target');
+  }
   if(candidate.action==='harden'){
     if(target.status!=='active'||target.contactRestriction?.level!=='soft')throw new Error('invalid_contact_target');
     const hostBound=input.contactFeedbackTargets?.some(item=>item.id===target.id&&item.revision===target.revision&&
@@ -286,6 +299,10 @@ function bindTarget(input:CommitmentValidationInput,candidate:GroundedCandidate)
   const matches=input.existing.filter(item=>canTake(item)&&item.content.includes(excerpt));
   if(matches.length!==1||matches[0]!.id!==target.id)throw new Error('invalid_commitment_target_binding');
   return target;
+}
+
+function sameActors(left:readonly string[],right:readonly string[]):boolean{
+  return left.length===right.length&&left.every(actor=>right.includes(actor));
 }
 
 function assertDistinctTargetClaims(operations:readonly ValidatedCommitmentOperation[]):void {
@@ -390,7 +407,7 @@ function commitmentOperationSchema(properties:Record<string,unknown>) {
     type:'object',additionalProperties:false,required:[...common,...required],
     properties:Object.fromEntries([...common,...required,...optional].map(key=>[key,key==='action'?{const:action}:properties[key]])),
   });
-  return {oneOf:[branch('propose',definition,['contactRestriction']),branch('establish',definition,['contactRestriction']),
+  return {oneOf:[branch('propose',definition,['targetId','targetExcerpt','contactRestriction']),branch('establish',definition,['contactRestriction']),
     branch('revise',[...definition,'targetId'],['targetExcerpt','contactRestriction']),
     ...['confirm','fulfill','cancel','harden'].map(action=>branch(action,['targetId'],['targetExcerpt']))]};
 }

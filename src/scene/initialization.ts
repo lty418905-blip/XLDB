@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { scopeKey } from '../core/types.ts';
 import type { SceneAuthority } from './store.ts';
 import type { SceneCharacter, SceneRoster, SceneScope } from './types.ts';
+import type {WorldSettings,WorldBalanceSetting,WorldInventorySetting} from './world-state.ts';
 import type { ReferenceImport, SceneTemplate, SceneTransfer } from './transfer.ts';
 import { rosterOf } from './perspective.ts';
 
@@ -46,7 +47,18 @@ export interface InitializationEntry {
   subjectId?: string;
   readerIds: string[];
   evidence: InitializationEvidence[];
+  initialAsset?: InitializationAsset;
+  initialPhysiology?: InitializationPhysiology;
 }
+
+export type InitializationAsset =
+  | {kind:'balance';ownerId:string;ownerQuote:string;unit:string;unitQuote:string;value:string;amountQuote:string}
+  | {kind:'inventory';ownerId:string;ownerQuote:string;item:string;itemQuote:string;count:number;amountQuote:string};
+
+export type InitializationPhysiology =
+  | {kind:'need';need:'hydration'|'nutrition'|'bladder'|'bowel'|'sleep'|'energy';state:'settled'|'noticeable'|'urgent'|'strained';quote:string}
+  | {kind:'effect';effect:'injury'|'illness'|'intoxication'|'pain'|'temperature'|'exhaustion'|'other';quote:string}
+  | {kind:'reproductive';status:'cycle_started'|'pregnancy_possible'|'pregnancy_confirmed'|'pregnancy_ended';quote:string};
 
 export interface InitializationCandidate {
   format: 'xldb-scene-initialization-v1';
@@ -69,6 +81,7 @@ export interface InitializationPreview {
     addedCharacters: string[];
     unchangedCharacters: string[];
     reference: unknown;
+    initialAssets: {added:string[];active:string[]};
   };
   nonHistorical: InitializationEntry[];
 }
@@ -134,8 +147,11 @@ const SYSTEM_PROMPT = `XLDB_SCENE_INITIALIZATION
 只返回 JSON，format 必须为 xldb-scene-initialization-v1。每个角色和条目都必须给出 evidence：sourceId、该来源正文的精确 SHA-256 sourceHash、正文中的逐字连续 quote。没有逐字依据就放入 missing，不补全。
 characters 只描述主要 NPC 的稳定身份与人格；persona 由证据支持，不制造经历、训练次数、好感或秘密知识。
 entries.kind 只能是 world_setting、npc_setting、public_background、secret、belief、starting_state、relationship、example_dialogue、future_idea。各类保持分开。readerIds 是明确知情 NPC ID：秘密不可广播；belief 至少包含其 subjectId；example_dialogue 和 future_idea 的 readerIds 必须为空，它们不是已发生交流或事实。未知知情范围保持为空并写 missing。条目不属于特定NPC时省略subjectId。
+只有来源明确写出初始物品数量或余额时，starting_state 条目才可带 initialAsset：余额 {kind:"balance",ownerId,ownerQuote,unit,unitQuote,value:"精确两位小数",amountQuote}；物品 {kind:"inventory",ownerId,ownerQuote,item,itemQuote,count:整数,amountQuote}。所有 Quote 必须是 evidence.quote 中连续原文，ownerId 是已识别角色 ID 或 player；金额或数量与 amountQuote 数值相符，不能凭背景或常识估算。没有明确数量则只保留文字设定并写 missing，不生成资产。
+角色的明确初始身体情况可在 starting_state 条目中带 initialPhysiology，必须有 subjectId 和逐字 quote：need 可写明确需求状态，effect 可写明确持续影响（严重度保持未知），reproductive 只写明确来源状态。不得从人格、年龄、性别或亲密关系推断怀孕、疾病、受伤等特殊状态。无特殊身体资料时省略，运行时会单独标注默认日常基线，它不是来源观察事实。
+每条 entries 都必须包含 readerIds 数组；未知知情者也写 readerIds:[]，不可省略。不能因为世界书公开可见就推定所有NPC已经知道其内容。
 条目 id 在同一初始化来源中稳定，用于重复导入和资料变更冲突检查。不要把未来设想、示例台词、幕后秘密或角色主观信念写成共同事实。
-JSON 结构：{"format":"xldb-scene-initialization-v1","name":"候选名","characters":[{"id":"稳定NPC ID","name":"姓名","aliases":[],"persona":"有依据的设定","evidence":[{"sourceId":"来源ID","sourceHash":"64位小写sha256","quote":"逐字原文"}]}],"entries":[{"id":"稳定条目ID","kind":"分类","text":"候选内容","subjectId":"可选NPC ID","readerIds":[],"evidence":[]}],"missing":[]}。`;
+JSON 结构：{"format":"xldb-scene-initialization-v1","name":"候选名","characters":[{"id":"稳定NPC ID","name":"姓名","aliases":[],"persona":"有依据的设定","evidence":[{"sourceId":"来源ID","sourceHash":"64位小写sha256","quote":"逐字原文"}]}],"entries":[{"id":"稳定条目ID","kind":"分类","text":"候选内容","subjectId":"可选NPC ID","readerIds":[],"evidence":[]}],"missing":[]}。可选 initialAsset 与 initialPhysiology 是上述对象，不是字符串。`;
 
 /** Build a bounded prompt whose source hashes bind the model output to exact host input. */
 export function buildInitializationPrompt(sourcesValue: unknown, existing: SceneRoster = {characters: []}) {
@@ -172,17 +188,21 @@ export function decodeInitializationCandidate(value: unknown, sourcesValue: unkn
   });
   if (new Set(characters.map(character => character.id)).size !== characters.length) fail('duplicate_initialization_character');
   const entries: InitializationEntry[] = input.entries.map((value: unknown) => {
-    const item = exact(value, ['id', 'kind', 'text', 'subjectId', 'readerIds', 'evidence'], 'invalid_initialization_entry');
+    const item = exact(value, ['id', 'kind', 'text', 'subjectId', 'readerIds', 'evidence', 'initialAsset','initialPhysiology'], 'invalid_initialization_entry');
     const id = identifier(item.id, 'invalid_initialization_entry');
     if (!ENTRY_KINDS.has(item.kind as InitializationEntryKind)) fail('invalid_initialization_entry');
     const kind = item.kind as InitializationEntryKind;
     const text = boundedText(item.text, MAX_TEXT, 'invalid_initialization_entry');
     const subjectId = item.subjectId == null || item.subjectId === '' ? undefined : identifier(item.subjectId, 'invalid_initialization_entry');
-    const readerIds = stringList(item.readerIds, MAX_CHARACTERS, MAX_ID, 'invalid_initialization_entry');
+    const readerIds = stringList(item.readerIds === undefined ? [] : item.readerIds, MAX_CHARACTERS, MAX_ID, 'invalid_initialization_entry');
     if (kind === 'secret' && !readerIds.length) fail('invalid_initialization_secret_readers');
     if (kind === 'belief' && (!subjectId || !readerIds.includes(subjectId))) fail('invalid_initialization_belief_reader');
     if (NON_HISTORICAL.has(kind) && readerIds.length) fail('invalid_initialization_nonhistorical_reader');
-    return {id, kind, text, ...(subjectId === undefined ? {} : {subjectId}), readerIds, evidence: evidenceOf(item.evidence, byId)};
+    const evidence=evidenceOf(item.evidence, byId);
+    const initialAsset=item.initialAsset===undefined?undefined:assetOf(item.initialAsset,kind,evidence);
+    const initialPhysiology=item.initialPhysiology===undefined?undefined:physiologyOf(item.initialPhysiology,kind,subjectId,evidence);
+    return {id, kind, text, ...(subjectId === undefined ? {} : {subjectId}), readerIds, evidence,
+      ...(initialAsset===undefined?{}:{initialAsset}),...(initialPhysiology===undefined?{}:{initialPhysiology})};
   });
   if (new Set(entries.map(entry => entry.id)).size !== entries.length) fail('duplicate_initialization_entry');
   return {
@@ -263,13 +283,26 @@ export class SceneInitialization {
       if (entry.readerIds.some(id => !characterIds.has(id)) || (entry.subjectId !== undefined && !characterIds.has(entry.subjectId))) {
         conflicts.push({code: 'invalid_initialization_reader', id: entry.id});
       }
+      if(entry.initialAsset&&entry.initialAsset.ownerId!=='player'){
+        const owner=merged.roster.characters.find(character=>character.id===entry.initialAsset!.ownerId);
+        if(!owner||![owner.name,...owner.aliases].includes(entry.initialAsset.ownerQuote))
+          conflicts.push({code:'invalid_initialization_asset_owner',id:entry.id});
+      }
+    }
+    const activeAssets=this.assetEntries(scope);
+    const assetKeys=new Set(activeAssets.map(item=>assetKey(item.asset)));
+    for(const entry of candidate.entries.filter(item=>item.initialAsset)){
+      const key=assetKey(entry.initialAsset!);
+      if(assetKeys.has(key)&&!activeAssets.some(item=>item.entryId===entry.id&&assetKey(item.asset)===key))
+        conflicts.push({code:'initialization_asset_conflict',id:entry.id});
+      assetKeys.add(key);
     }
     const plans = this.entryPlans(scope, candidate);
     conflicts.push(...plans.conflicts);
     const document = referenceDocument(plans.entries);
     let reference: unknown = {existing: 0, new: document.rows.length, conflicts: []};
     if (state.version) {
-      const referencePreview = this.transfer.preview(scope, document);
+      const referencePreview = this.transfer.preview(scope, document, merged.roster);
       reference = referencePreview.diff;
       conflicts.push(...referencePreview.conflicts);
     }
@@ -285,6 +318,8 @@ export class SceneInitialization {
         addedCharacters: merged.added,
         unchangedCharacters: merged.unchanged,
         reference,
+        initialAssets:{added:candidate.entries.filter(entry=>entry.initialAsset&&!activeAssets.some(item=>item.entryId===entry.id)).map(entry=>entry.id),
+          active:activeAssets.map(item=>item.entryId)},
       },
       nonHistorical: candidate.entries.filter(entry => NON_HISTORICAL.has(entry.kind)),
     };
@@ -372,6 +407,36 @@ export class SceneInitialization {
     }));
     return {sources:sources.map(row=>({sourceId:row.source_id,kind:row.kind,name:row.name,sourceHash:row.source_hash,
       status:row.status,revision:row.revision,updatedAtMs:row.updated})),artifacts};
+  }
+
+  /** Active, source-backed starting values. Projection must give explicit world settings precedence. */
+  private assetEntries(scope:SceneScope):{entryId:string;asset:InitializationAsset;readerIds:string[];evidence:InitializationEvidence[]}[]{
+    const references=new Set((this.db.prepare("SELECT id FROM scene_import_references WHERE scope=? AND status='accepted'")
+      .all(scopeKey(scope)) as {id:string}[]).map(row=>row.id));
+    return this.artifacts(scope).filter(row=>row.artifact_type==='entry'&&row.status==='active'&&row.reference_id&&references.has(row.reference_id))
+      .map(row=>({entryId:row.artifact_id,entry:JSON.parse(row.body) as InitializationEntry}))
+      .filter(({entry})=>entry.kind==='starting_state'&&entry.initialAsset!==undefined)
+      .map(({entryId,entry})=>({entryId,asset:entry.initialAsset!,readerIds:[...entry.readerIds],evidence:entry.evidence}));
+  }
+
+  activeAssets(scope:SceneScope):{balances:WorldBalanceSetting[];inventory:WorldInventorySetting[]}{
+    const balances:WorldBalanceSetting[]=[],inventory:WorldInventorySetting[]=[];
+    for(const {asset,readerIds} of this.assetEntries(scope)){
+      const visibility=[...new Set(['player',...readerIds])];
+      if(asset.kind==='balance')balances.push({ownerId:asset.ownerId,unit:asset.unit,value:asset.value,readerIds:visibility});
+      else inventory.push({ownerId:asset.ownerId,item:asset.item,count:asset.count,readerIds:visibility});
+    }
+    return {balances,inventory};
+  }
+
+  mergeAssets(scope:SceneScope,settings:WorldSettings):WorldSettings{
+    const initial=this.activeAssets(scope);
+    const balances=[...settings.balances],inventory=[...settings.inventory];
+    for(const value of initial.balances)
+      if(!balances.some(item=>item.ownerId===value.ownerId&&item.unit===value.unit))balances.push(value);
+    for(const value of initial.inventory)
+      if(!inventory.some(item=>item.ownerId===value.ownerId&&item.item===value.item))inventory.push(value);
+    return {...settings,balances,inventory};
   }
 
   /** Zero-write refresh preview for the host's currently enabled source set. */
@@ -608,6 +673,66 @@ function referenceRow(entry:InitializationEntry,revision:number):ReferenceImport
 }
 
 function referenceReaders(entry:InitializationEntry):string[]{return NON_HISTORICAL.has(entry.kind)?[]:[...entry.readerIds];}
+
+function assetOf(value:unknown,kind:InitializationEntryKind,evidence:InitializationEvidence[]):InitializationAsset{
+  if(kind!=='starting_state')fail('invalid_initialization_asset');
+  const raw=valueOf(value) as Record<string,unknown>;
+  const common=['kind','ownerId','ownerQuote','amountQuote'];
+  if(raw.kind!=='balance'&&raw.kind!=='inventory')fail('invalid_initialization_asset');
+  const assetKind=raw.kind;
+  const fields=assetKind==='balance'?[...common,'unit','unitQuote','value']:[...common,'item','itemQuote','count'];
+  const item=exact(raw,fields,'invalid_initialization_asset');
+  const ownerId=identifier(item.ownerId,'invalid_initialization_asset');
+  const ownerQuote=boundedText(item.ownerQuote,200,'invalid_initialization_asset');
+  const amountQuote=boundedText(item.amountQuote,40,'invalid_initialization_asset');
+  const quoted=(quote:string)=>evidence.some(source=>source.quote.includes(quote));
+  if(!quoted(ownerQuote)||!quoted(amountQuote))fail('invalid_initialization_asset_evidence');
+  if(ownerId==='player'&&!['player','Player','玩家'].includes(ownerQuote))fail('invalid_initialization_asset_owner');
+  if(assetKind==='balance'){
+    const unit=boundedText(item.unit,100,'invalid_initialization_asset');
+    const unitQuote=boundedText(item.unitQuote,100,'invalid_initialization_asset');
+    const value=boundedText(item.value,40,'invalid_initialization_asset');
+    if(!quoted(unitQuote)||unit!==unitQuote||!/^(?:0|[1-9]\d*)\.\d{2}$/.test(value)
+      ||!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(amountQuote)
+      ||value!==`${amountQuote.split('.')[0]}.${(amountQuote.split('.')[1]??'').padEnd(2,'0')}`)
+      fail('invalid_initialization_asset_evidence');
+    return {kind:'balance',ownerId,ownerQuote,unit,unitQuote,value,amountQuote};
+  }
+  const itemName=boundedText(item.item,200,'invalid_initialization_asset');
+  const itemQuote=boundedText(item.itemQuote,200,'invalid_initialization_asset');
+  const count=item.count;
+  if(!quoted(itemQuote)||itemName!==itemQuote||!Number.isSafeInteger(count)||Number(count)<0
+    ||!/^(?:0|[1-9]\d*)$/.test(amountQuote)||count!==Number(amountQuote))fail('invalid_initialization_asset_evidence');
+  return {kind:'inventory',ownerId,ownerQuote,item:itemName,itemQuote,count:count as number,amountQuote};
+}
+
+function assetKey(asset:InitializationAsset):string{
+  return JSON.stringify([asset.kind,asset.ownerId,asset.kind==='balance'?asset.unit:asset.item]);
+}
+
+function physiologyOf(value:unknown,kind:InitializationEntryKind,subjectId:string|undefined,evidence:InitializationEvidence[]):InitializationPhysiology{
+  if(kind!=='starting_state'||!subjectId)fail('invalid_initialization_physiology');
+  const raw=valueOf(value);
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))fail('invalid_initialization_physiology');
+  const item=raw as Record<string,unknown>;
+  let result:InitializationPhysiology;
+  if(item.kind==='need'){
+    const body=exact(item,['kind','need','state','quote'],'invalid_initialization_physiology');
+    if(!['hydration','nutrition','bladder','bowel','sleep','energy'].includes(body.need)
+      ||!['settled','noticeable','urgent','strained'].includes(body.state))fail('invalid_initialization_physiology');
+    result={kind:'need',need:body.need,state:body.state,quote:boundedText(body.quote,1000,'invalid_initialization_physiology')};
+  }else if(item.kind==='effect'){
+    const body=exact(item,['kind','effect','quote'],'invalid_initialization_physiology');
+    if(!['injury','illness','intoxication','pain','temperature','exhaustion','other'].includes(body.effect))fail('invalid_initialization_physiology');
+    result={kind:'effect',effect:body.effect,quote:boundedText(body.quote,1000,'invalid_initialization_physiology')};
+  }else if(item.kind==='reproductive'){
+    const body=exact(item,['kind','status','quote'],'invalid_initialization_physiology');
+    if(!['cycle_started','pregnancy_possible','pregnancy_confirmed','pregnancy_ended'].includes(body.status))fail('invalid_initialization_physiology');
+    result={kind:'reproductive',status:body.status,quote:boundedText(body.quote,1000,'invalid_initialization_physiology')};
+  }else fail('invalid_initialization_physiology');
+  if(!evidence.some(source=>source.quote.includes(result.quote)))fail('invalid_initialization_physiology_evidence');
+  return result;
+}
 
 function referenceTable(kind:InitializationEntryKind,revision:number):string{return `initialization/${kind}/r${revision}`;}
 

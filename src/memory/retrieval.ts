@@ -8,6 +8,7 @@ import type {SemanticCue} from './retention.ts';
 import type { MemorySnapshot, MemoryView, Scope } from './access.ts';
 import type { ModelConfig } from '../core/types.ts';
 import { scopeKey } from '../core/types.ts';
+import {traceModel,withModelAddress,recordModelDispatch,recordModelResponse,recordModelUsage} from '../core/runtime-log.ts';
 import {MemoryTokenizer} from './tokenizer.ts';
 import type {ChineseTokenizer} from './tokenizer.ts';
 import {quantizeVector,vectorPrecision} from './vector-forgetting.ts';
@@ -17,13 +18,19 @@ const CANDIDATE_LIMIT = 20;
 const DEFAULT_EXTERNAL_TIMEOUT_MS = 15_000;
 const SEARCH_LIMIT = 40;
 const EMBEDDING_BATCH = 32;
+// Cosine distance is smaller for a closer match. This is a routing heuristic,
+// not a confidence score; callers can tune it for their provider/data.
+const DEFAULT_RERANK_COSINE_GAP = 0.08;
+const RERANK_POLICY_VERSION = 1;
 
 export type RetrievalConfig = { embedding: ModelConfig; reranker: ModelConfig };
 type IndexedRow = { id: string; text: string; semantic: string; kind: string; precisionBits:VectorPrecision; lexical?: string; vector?: number[] };
 type RerankResult = { index: number; score: number };
-export interface RetrievalOptions {tokenizer?:ChineseTokenizer|'default';minimumRerankScore?:number;externalTimeoutMs?:number;vectorIndex?:'auto'|'flat'}
+export interface RetrievalOptions {tokenizer?:ChineseTokenizer|'default';minimumRerankScore?:number;rerankCosineGap?:number;externalTimeoutMs?:number;vectorIndex?:'auto'|'flat'}
 export interface RetrievalResult {ids:string[];mode:string;tokenizer:ChineseTokenizer;intent:'fact'|'episode'|'balanced';cacheHit:boolean;topScore?:number;
-  fallbackReason?:'embedding_request_failed'|'rerank_request_failed'|'pq_index_build_failed';semanticCues?:SemanticCue[];vectorIndex?:'ivf-pq'|'flat'|'none'}
+  fallbackReason?:'embedding_request_failed'|'rerank_request_failed'|'pq_index_build_failed';semanticCues?:SemanticCue[];vectorIndex?:'ivf-pq'|'flat'|'none';
+  // rerankUsed records an attempted provider call, including an attempted call that failed.
+  rerankUsed:boolean;rerankReason:'not_configured'|'no_candidates'|'clear_cosine_gap'|'near_cosine_gap'|'relevant_anchor'|'bm25_no_embedding'|'provider_fallback'}
 type Provider = {url:string;key:string;model:string};
 type Projection = {fingerprint:string;table:any;index:'ivf-pq'|'flat'|'none';indexFailure?:true;results:Map<string,RetrievalResult>};
 
@@ -40,6 +47,7 @@ export class Retrieval {
   private readonly directory: string;
   private readonly tokenizer:MemoryTokenizer;
   private readonly minimumRerankScore:number|undefined;
+  private readonly rerankCosineGap:number;
   private readonly externalTimeoutMs:number;
   private readonly vectorIndex:'auto'|'flat';
 
@@ -47,8 +55,10 @@ export class Retrieval {
     this.directory = directory;
     this.tokenizer=new MemoryTokenizer(options.tokenizer==='default'?undefined:options.tokenizer);
     if(options.minimumRerankScore!==undefined&&!Number.isFinite(options.minimumRerankScore))throw new Error('invalid_rerank_threshold');
+    if(options.rerankCosineGap!==undefined&&(!Number.isFinite(options.rerankCosineGap)||options.rerankCosineGap<0||options.rerankCosineGap>2))throw new Error('invalid_rerank_cosine_gap');
     if(options.externalTimeoutMs!==undefined&&(!Number.isSafeInteger(options.externalTimeoutMs)||options.externalTimeoutMs<1||options.externalTimeoutMs>30_000))throw new Error('invalid_external_timeout');
     this.minimumRerankScore=options.minimumRerankScore;
+    this.rerankCosineGap=options.rerankCosineGap??DEFAULT_RERANK_COSINE_GAP;
     this.externalTimeoutMs=options.externalTimeoutMs??DEFAULT_EXTERNAL_TIMEOUT_MS;
     this.vectorIndex=options.vectorIndex??'auto';
   }
@@ -75,9 +85,10 @@ export class Retrieval {
         precisionBits:vectorPrecision(snapshot.memories.get(view.id)!,view) })).filter(row => row.text.length > 0);
       const embedding = configured(config.embedding, 'embedding');
       const reranker = configured(config.reranker, 'reranker');
-      const mode = embedding ? (reranker ? 'hybrid+rerank' : 'hybrid') : (reranker ? 'bm25+rerank' : 'bm25');
+      const mode = embedding ? 'hybrid' : 'bm25';
       const intent=queryIntent(query);
-      const result=(resultMode:string,ids:string[],extra:Partial<RetrievalResult>={}):RetrievalResult=>({ids,mode:resultMode,tokenizer:this.tokenizer.name,intent,cacheHit:false,...extra});
+      const result=(resultMode:string,ids:string[],extra:Partial<RetrievalResult>={}):RetrievalResult=>({ids,mode:resultMode,tokenizer:this.tokenizer.name,intent,cacheHit:false,
+        rerankUsed:false,rerankReason:reranker?'no_candidates':'not_configured',...extra});
       if (rows.length === 0) {
         await this.clearProjection(key);
         return result(mode,[]);
@@ -94,7 +105,12 @@ export class Retrieval {
         }));
         const projection=await this.table(key,fingerprint,rows,activeEmbedding,deadline);
         const table=projection.table;
-        const cacheKey=digest(JSON.stringify([query,identity(activeReranker),activeReranker?digest(activeReranker.key):'',activeEmbedding?digest(activeEmbedding.key):'',this.minimumRerankScore,fallbackReason]));
+        const policyRows=views.map(view=>[view.id,view.access,view.anchor,view.protectedFacts,
+          snapshot.memories.get(view.id)?.retention?.kind,snapshot.memories.get(view.id)?.accessOverride,
+          snapshot.memories.get(view.id)?.source.reference]);
+        const cacheKey=digest(JSON.stringify([RERANK_POLICY_VERSION,query,nowMs,snapshot.version,policyRows,
+          identity(activeReranker),activeReranker?digest(activeReranker.key):'',activeEmbedding?digest(activeEmbedding.key):'',
+          this.minimumRerankScore,this.rerankCosineGap,fallbackReason]));
         const cached=projection.results.get(cacheKey);
         if(cached)return {...cached,ids:[...cached.ids],cacheHit:true};
         const rowById=new Map(rows.map(row=>[row.id,row]));
@@ -114,25 +130,31 @@ export class Retrieval {
           const ranked=new Map<string,number>();addRanks(ranked,lexical);addRanks(ranked,semantic);
           const candidates=[...ranked.entries()].filter(([id])=>rowById.has(id)).map(([id,score])=>({id,score:score*(intent!=='balanced'&&rowById.get(id)!.kind===intent?1.15:1)}))
             .sort((a,b)=>b.score-a.score||a.id.localeCompare(b.id)).slice(0,CANDIDATE_LIMIT).map(item=>item.id);
-          if(!activeReranker||!candidates.length)return {ids:candidates,topScore:undefined,semantic};
+          const rerankReason=await this.rerankDecision(part,candidates,semantic,activeEmbedding,activeReranker,rowById,viewsById);
+          if(rerankReason==='not_configured'||rerankReason==='no_candidates'||rerankReason==='clear_cosine_gap')
+            return {ids:candidates,topScore:undefined,semantic,rerankUsed:false,rerankReason};
           let reranked:RerankResult[];
-          try{reranked=await rerank(activeReranker,part,candidates.map(id=>rowById.get(id)!.text),deadline);}
+          try{reranked=await rerank(activeReranker!,part,candidates.map(id=>rowById.get(id)!.text),deadline);}
           catch(error){
             if(providerFailure(error)!=='rerank_request_failed')throw error;
-            return {ids:candidates,topScore:undefined,rerankFailed:true,semantic};
+            return {ids:candidates,topScore:undefined,rerankFailed:true,semantic,rerankUsed:true,rerankReason};
           }
           // A provider score is an ordering signal, not a calibrated probability.
           const floor=this.minimumRerankScore??-Infinity;
-          return {ids:reranked.filter(item=>item.score>=floor).map(item=>candidates[item.index]),topScore:reranked[0]?.score,semantic};
+          return {ids:reranked.filter(item=>item.score>=floor).map(item=>candidates[item.index]),topScore:reranked[0]?.score,semantic,rerankUsed:true,rerankReason};
         }));
         const ids:string[]=[];
         for(let rank=0;rank<CANDIDATE_LIMIT&&ids.length<CANDIDATE_LIMIT;rank++)for(const list of lists){
           const id=list.ids[rank];if(id&&!ids.includes(id)&&ids.length<CANDIDATE_LIMIT)ids.push(id);
         }
         const rerankFailed=lists.some(list=>'rerankFailed' in list&&list.rerankFailed);
+        const rerankUsed=lists.some(list=>list.rerankUsed);
+        const rerankReason=fallbackReason?'provider_fallback':lists.find(list=>list.rerankReason==='relevant_anchor')?.rerankReason??
+          lists.find(list=>list.rerankReason==='near_cosine_gap')?.rerankReason??
+          lists.find(list=>list.rerankReason==='bm25_no_embedding')?.rerankReason??lists[0]?.rerankReason??'no_candidates';
         const semanticCues=activeEmbedding?semanticReactivations(lists[0]?.semantic??[],rowById,viewsById,snapshot,query):[];
-        const output=result(rerankFailed?(activeEmbedding?'hybrid-fallback':'bm25-fallback'):resultMode,ids,
-          {topScore:lists[0]?.topScore,semanticCues,vectorIndex:projection.index,...(rerankFailed?{fallbackReason:'rerank_request_failed' as const}:
+        const output=result(rerankFailed?(activeEmbedding?'hybrid-fallback':'bm25-fallback'):rerankUsed?`${resultMode}+rerank`:resultMode,ids,
+          {topScore:lists[0]?.topScore,semanticCues,vectorIndex:projection.index,rerankUsed,rerankReason,...(rerankFailed?{fallbackReason:'rerank_request_failed' as const}:
             fallbackReason?{fallbackReason}:projection.indexFailure?{fallbackReason:'pq_index_build_failed' as const}:{})});
         if(!rerankFailed)cache(projection.results,cacheKey,output,64);
         return {...output,ids:[...output.ids]};
@@ -256,6 +278,29 @@ export class Retrieval {
     if(!missing.length)return;
     const vectors=await embed(embedding,missing.map(item=>item.query),deadline);
     missing.forEach((item,index)=>cache(this.queryVectors,item.id,vectors[index],64));
+  }
+
+  private async rerankDecision(part:string,candidates:string[],semantic:readonly unknown[],embedding:Provider|undefined,
+    reranker:Provider|undefined,rows:Map<string,IndexedRow>,views:Map<string,MemoryView>):Promise<RetrievalResult['rerankReason']>{
+    if(!reranker)return 'not_configured';
+    if(!candidates.length)return 'no_candidates';
+    if(!embedding)return 'bm25_no_embedding';
+    const terms=new Set((await this.tokenizer.terms(part)).filter(term=>term.length>=2));
+    for(const id of candidates){
+      const view=views.get(id);
+      if(!view)continue;
+      const evidence=[view.anchor,...view.protectedFacts].filter((value):value is string=>typeof value==='string'&&!!value.trim());
+      if(!evidence.length)continue;
+      for(const phrase of evidence){
+        if(phrase.length>=2&&(part.includes(phrase)||phrase.includes(part)))return 'relevant_anchor';
+        const evidenceTerms=await this.tokenizer.terms(phrase);
+        if(evidenceTerms.some(term=>terms.has(term)))return 'relevant_anchor';
+      }
+    }
+    const distances=semantic.map(item=>record(item)).filter(item=>typeof item.id==='string'&&rows.has(item.id)&&
+      typeof item._distance==='number'&&Number.isFinite(item._distance)&&item._distance>=0)
+      .map(item=>item._distance as number).sort((a,b)=>a-b);
+    return distances.length>=2&&distances[1]-distances[0]<=this.rerankCosineGap?'near_cosine_gap':'clear_cosine_gap';
   }
 
   private async clearProjection(key:string):Promise<void>{
@@ -437,11 +482,13 @@ async function rerank(config: { url: string; key: string; model: string }, query
 }
 
 async function request(config: { url: string; key: string; model: string }, payload: object, kind: 'embedding' | 'rerank',deadline:number): Promise<unknown> {
+  return withModelAddress({stage:kind==='rerank'?'reranker':'embedding'},()=>traceModel({model:config.model,baseUrl:config.url},[],async()=>{
   const remaining=deadline-Date.now();
   if(remaining<=0)throw new Error(`${kind}_request_failed`);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(),remaining);
   try {
+    recordModelDispatch();
     const response = await fetch(config.url, {
       method: 'POST',
       headers: config.key ? { Authorization: `Bearer ${config.key}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' },
@@ -449,9 +496,12 @@ async function request(config: { url: string; key: string; model: string }, payl
       signal: controller.signal,
       redirect: 'error',
     });
+    recordModelResponse();
     if (!response.ok) throw new Error(`${kind}_request_failed`);
     try {
-      return await response.json();
+      const body=await response.json();
+      recordModelUsage(body?.usage);
+      return body;
     } catch {
       if(controller.signal.aborted)throw new Error(`${kind}_request_failed`);
       throw new Error(`invalid_${kind}_response`);
@@ -462,6 +512,7 @@ async function request(config: { url: string; key: string; model: string }, payl
   } finally {
     clearTimeout(timeout);
   }
+  }));
 }
 
 function record(value: unknown): Record<string, unknown> {

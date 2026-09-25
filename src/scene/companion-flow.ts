@@ -15,11 +15,10 @@ import type {QuietExceptionBinding} from '../companion/types.ts';
 import {contactRestrictionWindow} from '../commitments/index.ts';
 import {contactSources,contactSummaryTask,decodeContactSummary,contactContext,contactClock} from '../companion/contact-context.ts';
 import type {ContactContext} from '../companion/contact-context.ts';
-import type {ContactAffect} from '../emotion/contact-affect.ts';
 import {compactOpenHerForContact} from '../companion/relationship-context.ts';
 import {companionIdentityGuidance,companionIdentityIssue,ensureCompanionIdentityBody} from '../companion/identity-expression.ts';
 import type {LearningTrace} from '../companion/personal-weights.ts';
-import {sceneAddressGuidance} from './address.ts';
+import {sceneExpressionOptions} from './address.ts';
 
 export interface ContactJudgment {choice:'send'|'wait'|'skip';rawChoice?:'send'|'wait'|'skip';experience:'positive'|'uncertain'|'negative';emotion:'aligned'|'uncertain'|'conflicting';learningTraces?:LearningTrace[]}
 
@@ -84,10 +83,7 @@ export class CompanionFlow {
     const subject=this.authority.subject(scope);
     const agentCompanion=subject?.host==='agent'&&this.authority.interactions.modeOf(scope)==='companion';
     const clock=agentCompanion?contactClock(nowMs,this.authority.interactions.clock(scope).timeZone??'UTC'):null;
-    const affect=agentCompanion&&clock?this.contactEmotion(scope,characterId,clock.nowMs,undefined,
-      latest?.role==='user'&&latest.id===currentUserSourceId?{sourceId:latest.id,revision:latest.revision}:null).affect:null;
     return (clock?'\n当前伴侣现实时间：'+JSON.stringify(clock):'')+
-      this.contactAffectText(affect)+
       (strategy?'\n本轮沟通建议（依据已授权资料，推断不是事实，当前用户意愿优先）：'+JSON.stringify(strategy):'')+
       (assessment?'\n'+formatRelationshipGuidance(assessment,'reply'):'')+
       (harden?'\n用户刚明确表示此前勿扰时段的破例联系让其不快。请按当前角色人设在本轮正常回复中真诚、简短道歉，承认已收到边界；不要主动补发道歉，也不要再把该承诺当作可破例。':'');
@@ -155,12 +151,6 @@ export class CompanionFlow {
     currentReply:{sourceId:string;revision:number}|null=null){
     return this.authority.contactEmotionProjection(scope,characterId,nowMs,state,currentReply);
   }
-  private contactAffectText(affect:ContactAffect|null):string {
-    if(!affect||affect.phase==='none'||!affect.episode)return '';
-    return '\n角色等待体验（基于已接受消息和实际发送记录；不能推断用户动机，不改写稳定信任）：'+JSON.stringify(affect)+
-      (affect.needsClarification?'\n先前用户对无法回复的说明没有明确结束时间，可温和核实近况；不能把它当作已经证明永久忙碌。':'')+
-      (affect.currentExplanation?'\n用户当前返场提供了自己的解释，请结合这条当前说明回应并修复关系，不继续埋怨。':'');
-  }
   async poll(scope:SceneScope,characterId:string,trigger:'event'|'scheduled',configs:Configurations,assertCurrent:()=>void){
     const actor=this.actor(scope,characterId),subject=this.requireSubject(scope),state=this.authority.state(scope);
     const controls=this.authority.userModel.controls(subject.subjectId);
@@ -217,13 +207,13 @@ export class CompanionFlow {
     if(subject.host==='agent'&&this.requireLocalDecisions&&!this.decisionProvider&&(!initialAssessment?.contactCorrected||quiet.length>0))
       throw new Error('agentjev_unavailable');
     const contactEmotion=this.contactEmotion(scope,characterId,now,state);
-    const context=await this.core.contextFrom(this.authority.snapshot(scope,characterId,state),quiet.length?'此刻适合表达思念的真实共同经历':opportunity.topic,configs,
-      contactEmotion.emotion,this.authority.preferences(scope,characterId,state),assertCurrent);
-    context.context+=this.authority.worldContext(scope,characterId,state);
-    context.context+=this.contactAffectText(contactEmotion.affect);
     const priorAddress=state.sources.filter(source=>source.status==='accepted'&&source.envelope.targetId===characterId).at(-1);
-    context.context+=sceneAddressGuidance(this.authority,scope,characterId,
-      priorAddress?.envelope??{targetId:characterId,mode:'direct',presentIds:[characterId]},state,context.emotion);
+    const context=await this.core.contextFrom(this.authority.snapshot(scope,characterId,state),quiet.length?'此刻适合表达思念的真实共同经历':opportunity.topic,configs,
+      contactEmotion.emotion,this.authority.preferences(scope,characterId,state),assertCurrent,now,
+      sceneExpressionOptions(this.authority,scope,characterId,
+        priorAddress?.envelope??{targetId:characterId,mode:'direct',presentIds:[characterId]},state,
+        contactEmotion.emotion,now,contactEmotion.affect));
+    context.context+=this.authority.worldContext(scope,characterId,state);
     context.context+=this.authority.commitments.projectPersistent(scope,{characterId,purpose:'expression',mode:'companion'}).systemText;
     // Turning off personalization must not prevent an independently enabled greeting.
     const strategy=await this.strategy(scope,characterId,context.context,configs,assertCurrent,'proactive')??this.basicStrategy(subject.subjectId,opportunity.purpose);

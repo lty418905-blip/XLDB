@@ -36,6 +36,8 @@ import {PhysiologyStore} from '../common/physiology.ts';
 import {GeographyStore} from '../common/geography.ts';
 import {CompanionPresets} from '../companion/presets.ts';
 import {RelationshipAssessmentStore} from '../companion/relationship-assessment.ts';
+import {SceneCalendarStore} from './calendar-store.ts';
+import {initialStorySettings} from './story-initial-clock.ts';
 import type {RelationshipAssessmentInput,RelationshipCorrection} from '../companion/relationship-assessment.ts';
 
 export interface SceneSubjectBinding {host:'agent'|'sillytavern';baseScope:SceneScope;subjectId:string;bindingId:string;createdAtMs:number}
@@ -43,6 +45,7 @@ export interface SceneSubjectBinding {host:'agent'|'sillytavern';baseScope:Scene
 /** World sources and all NPC projections share the existing SQLite transaction. */
 export class SceneAuthority {
   private db: DatabaseSync;
+  private emotionReplayCache=new Map<string,EmotionState>();
   private savepointSequence=0;
   readonly lifecycle:SceneLifecycle;
   readonly processing:Processing;
@@ -55,6 +58,7 @@ export class SceneAuthority {
   readonly userModel:UserModelStore;
   readonly companion:CompanionStore;
   readonly relationshipAssessments:RelationshipAssessmentStore;
+  readonly calendar:SceneCalendarStore;
   readonly personalWeights:PersonalWeightsStore;
   readonly personalLearning:PersonalLearning;
   personalModelIdentity='';
@@ -89,6 +93,7 @@ export class SceneAuthority {
     this.initialization=new SceneInitialization(db,this);
     this.director=new SceneDirector(db);
     this.commitments=new Commitments(db);
+    this.calendar=new SceneCalendarStore(db,this);
     this.userModel=new UserModelStore(db);
     this.companion=new CompanionStore(db);
     this.relationshipAssessments=new RelationshipAssessmentStore(db);
@@ -280,7 +285,7 @@ export class SceneAuthority {
         const acceptedAtMs = previous?.acceptedAtMs ?? Math.min(message.acceptedAtMs,now);
         // Editing an existing source is an explicit user correction, not a replay of its old derivation.
         const replyTo=message.replyTo??previous?.replyTo;
-        const acceptedTimeZone=previous?previous.acceptedTimeZone:(this.interactions.modeOf(scope)==='companion'
+        const acceptedTimeZone=previous?previous.acceptedTimeZone:(this.interactions.modeOf(scope)
           ?this.interactions.clock(scope).timeZone??'UTC':'UTC');
         const next: SceneMessage = {...message,revision,acceptedAtMs,acceptedTimeZone,
           dependencies:message.dependencies??previous?.dependencies??[],...(replyTo?{replyTo}:{})};
@@ -348,12 +353,90 @@ export class SceneAuthority {
   pendingIndexCleanup(scope:SceneScope) {
     return this.db.prepare('SELECT character,version FROM scene_index_cleanup WHERE scope=?').all(scopeKey(scope)) as {character:string;version:number}[];
   }
+  /** Recomputing an older degraded source must also discard analyses based on its old projection. */
+  invalidateAfterDegraded(scope:SceneScope,sourceId:string,revision:number):void {
+    this.transaction(()=>{
+      const accepted=this.state(scope).sources.filter(source=>source.status==='accepted');
+      const index=accepted.findIndex(source=>source.id===sourceId&&source.revision===revision&&source.analysis?.skippedStages?.length);
+      if(index<0)throw new Error('context_changed_retry');
+      for(const source of accepted.slice(index+1)){
+        const analysis=source.analysis?withoutEmotionStates(source.analysis):null;
+        const next=analysis&&source.envelope.mode==='scene'?{...analysis,plan:null}:analysis;
+        this.db.prepare("UPDATE scene_sources SET processing='pending',analysis=? WHERE scope=? AND id=?")
+          .run(next?JSON.stringify(next):null,scopeKey(scope),source.id);
+        this.processing.clearSources(scope,[source.id]);
+      }
+      if(index+1<accepted.length){this.rebuildEmotionStates(scope);this.bump(scope);this.rebuildDerived(scope);}
+    });
+  }
   indexCleanupScopes():SceneScope[] {
     const rows=this.db.prepare('SELECT DISTINCT scope FROM scene_index_cleanup').all() as {scope:string}[];
     return rows.map(row=>{const [worldId,sessionId,branchId,characterId]=JSON.parse(row.scope);return {worldId,sessionId,branchId,characterId};});
   }
   finishIndexCleanup(scope:SceneScope,character:string,version:number) {
     this.db.prepare('DELETE FROM scene_index_cleanup WHERE scope=? AND character=? AND version=?').run(scopeKey(scope),character,version);
+  }
+  isOpen(){return this.db.isOpen;}
+
+  deferredEmotionScopes():SceneScope[] {
+    const rows=this.db.prepare("SELECT DISTINCT scope FROM scene_sources WHERE status='accepted' AND processing='ready' AND json_array_length(json_extract(analysis,'$.emotionCandidateReadyIds'))>0")
+      .all() as {scope:string}[];
+    return rows.map(row=>{
+      const [worldId,sessionId,branchId,characterId]=JSON.parse(row.scope);
+      return {worldId,sessionId,branchId,characterId};
+    });
+  }
+
+  /** Consume one background candidate, or all prepared history for one foreground NPC. */
+  completeDeferredEmotion(scope:SceneScope,foregroundCharacterId?:string):boolean {
+    return this.transaction(()=>{
+      const state=this.state(scope),blocked=new Set<string>();
+      let completed=false;
+      for(const source of state.sources){
+        if(source.status!=='accepted'||source.processing!=='ready'||!source.analysis?.plan)continue;
+        for(const id of source.analysis.emotionPendingIds??[]){
+          if(foregroundCharacterId&&id!==foregroundCharacterId)continue;
+          if(blocked.has(id))continue;
+          if(!source.analysis.emotionCandidateReadyIds?.includes(id)){
+            blocked.add(id);continue;
+          }
+          if(source.analysis.skippedStages?.some(item=>item.stage==='emotion'&&item.characterId===id)){
+            blocked.add(id);continue;
+          }
+          if(!source.analysis.characters[id])throw new Error('invalid_scene_emotion_schedule');
+          const remaining=source.analysis.emotionPendingIds!.filter(item=>item!==id);
+          const ready=source.analysis.emotionCandidateReadyIds.filter(item=>item!==id);
+          this.db.prepare("UPDATE scene_sources SET analysis=json_set(analysis,'$.emotionPendingIds',json(?),'$.emotionCandidateReadyIds',json(?)) WHERE scope=? AND id=? AND revision=? AND status='accepted' AND processing='ready'")
+            .run(JSON.stringify(remaining),JSON.stringify(ready),scopeKey(scope),source.id,source.revision);
+          completed=true;
+          if(!foregroundCharacterId){this.rebuildEmotionStates(scope,id);return true;}
+        }
+      }
+      if(completed)this.rebuildEmotionStates(scope,foregroundCharacterId);
+      return completed;
+    });
+  }
+
+  /** Install a real model candidate for a pre-upgrade placeholder after explicit processing. */
+  recordLegacyEmotionCandidate(scope:SceneScope,expectedVersion:number,sourceId:string,revision:number,
+    characterId:string,result:import('../core/models.ts').SceneEmotionResult):void {
+    this.transaction(()=>{
+      const state=this.state(scope,true);
+      if(state.version!==expectedVersion)throw new Error('context_changed_retry');
+      const source=state.sources.find(item=>item.id===sourceId&&item.revision===revision&&item.status==='accepted'
+        &&item.processing==='ready'&&item.analysis?.plan&&item.analysis.emotionPendingIds?.includes(characterId)
+        &&!item.analysis.emotionCandidateReadyIds?.includes(characterId));
+      if(!source?.analysis?.plan||!source.analysis.characters[characterId])throw new Error('context_changed_retry');
+      const relationships=validateRelationships(result.relationships,
+        relationshipValidationContext(source,source.analysis.plan,state.roster,characterId));
+      const prior=source.analysis.characters[characterId]!;
+      const analysis={...source.analysis,characters:{...source.analysis.characters,
+        [characterId]:{...prior,emotion:{...result.emotion,stableRelationDelta:{}},
+          ...(relationships.length?{relationships}:{})}},
+        emotionCandidateReadyIds:[...(source.analysis.emotionCandidateReadyIds??[]),characterId]};
+      this.db.prepare("UPDATE scene_sources SET analysis=? WHERE scope=? AND id=? AND revision=? AND status='accepted' AND processing='ready'")
+        .run(JSON.stringify(analysis),scopeKey(scope),sourceId,revision);
+    });
   }
 
   commit(scope: SceneScope, expectedVersion: number, results: {id:string;revision:number;analysis:SceneAnalysis}[]) {
@@ -377,6 +460,29 @@ export class SceneAuthority {
           timeZone:source.acceptedTimeZone,
         });
         effective[index]={...source,processing:'ready',analysis:result.analysis};
+      }
+      const windowSelections=new Map<string,Set<string>>();
+      for(const source of effective){
+        if(source.status!=='accepted'||source.processing!=='ready'||!source.analysis)continue;
+        const schedule=source.analysis.emotionSchedule;
+        const pending=source.analysis.emotionPendingIds??[];
+        const ready=source.analysis.emotionCandidateReadyIds??[];
+        if(pending.some(id=>!source.analysis!.characters[id]||!schedule?.deferredIds.includes(id)))
+          throw new Error('invalid_scene_emotion_schedule');
+        if(new Set(ready).size!==ready.length||ready.some(id=>!pending.includes(id)||
+          source.analysis!.skippedStages?.some(item=>item.stage==='emotion'&&item.characterId===id)))
+          throw new Error('invalid_scene_emotion_schedule');
+        if(!schedule)continue;
+        if(!schedule.windowId||new Set(schedule.eligibleIds).size!==schedule.eligibleIds.length||
+          new Set(schedule.selectedIds).size!==schedule.selectedIds.length||new Set(schedule.forcedIds).size!==schedule.forcedIds.length||
+          new Set(schedule.deferredIds).size!==schedule.deferredIds.length||
+          schedule.selectedIds.some(id=>!schedule.eligibleIds.includes(id)||
+            (schedule.deferredIds.includes(id)&&!source.analysis?.skippedStages?.some(item=>item.stage==='emotion'&&item.characterId===id)))||
+          schedule.forcedIds.some(id=>!schedule.selectedIds.includes(id)))throw new Error('invalid_scene_emotion_schedule');
+        const selected=windowSelections.get(schedule.windowId)??new Set<string>();
+        for(const id of schedule.selectedIds)if(!schedule.forcedIds.includes(id))selected.add(id);
+        if(selected.size>4)throw new Error('invalid_scene_emotion_budget');
+        windowSelections.set(schedule.windowId,selected);
       }
       const acceptedResults=prepared;
       if(settings){
@@ -488,18 +594,37 @@ export class SceneAuthority {
   emotion(scope: SceneScope, characterId: string, now = Date.now(), state = this.state(scope)) {
     const character = state.roster.characters.find(character=>character.id===characterId);
     if (!character) throw new Error('invalid_scene_character');
-    let emotion = createEmotion(this.emotionTime(scope,[],state.createdAtMs),character.emotion,emotionIdentitySeed(scope,characterId));
-    for (const [index,source] of state.sources.entries()) {
-      if (source.status !== 'accepted' || source.processing !== 'ready') continue;
-      const analysis = source.analysis?.characters[characterId];
-      if(analysis) {
-        const row=this.db.prepare("SELECT j.value AS body FROM scene_sources s,json_each(s.analysis,'$.emotionStates') j WHERE s.scope=? AND s.id=? AND s.revision=? AND s.status='accepted' AND s.processing='ready' AND j.key=?")
-          .get(scopeKey(scope),source.id,source.revision,characterId) as {body:string}|undefined;
-        const stored=source.analysis?.emotionStates?.[characterId]??(row?JSON.parse(row.body):undefined);
-        emotion=stored?validateEmotionState(stored):advanceEmotion(emotion,analysis.emotion,this.emotionTime(scope,state.sources.slice(0,index+1),source.acceptedAtMs),character.emotion);
-      }
+    // The ordinary state read omits neural snapshots. Read them once and fingerprint
+    // the actual role history, so unrelated world-version changes keep this replay.
+    const rows=this.db.prepare("SELECT s.id,s.revision,j.value AS body FROM scene_sources s,json_each(s.analysis,'$.emotionStates') j WHERE s.scope=? AND s.status='accepted' AND s.processing='ready' AND j.key=?")
+      .all(scopeKey(scope),characterId) as {id:string;revision:number;body:string}[];
+    const storedBySource=new Map(rows.map(row=>[JSON.stringify([row.id,row.revision]),row.body]));
+    const initialTime=this.emotionTime(scope,[],state.createdAtMs);
+    const events: {stored:EmotionState|undefined;body:string|undefined;delta:import('../emotion/openher.ts').EmotionDelta;at:number|undefined}[]=[];
+    for(const [index,source] of state.sources.entries()){
+      if(source.status!=='accepted'||source.processing!=='ready')continue;
+      const analysis=source.analysis?.characters[characterId];
+      if(!analysis||source.analysis?.emotionPendingIds?.includes(characterId))continue;
+      const stored=source.analysis?.emotionStates?.[characterId];
+      const body=stored?JSON.stringify(stored):storedBySource.get(JSON.stringify([source.id,source.revision]));
+      events.push({stored,body,delta:analysis.emotion,
+        at:body===undefined?this.emotionTime(scope,state.sources.slice(0,index+1),source.acceptedAtMs):undefined});
     }
-    return emotionAt(emotion,this.emotionTime(scope,state.sources,now),character.emotion);
+    const replayKey=createHash('sha256').update(JSON.stringify([scopeKey(scope),characterId,character.emotion,
+      initialTime,events.map(event=>[event.body,event.body===undefined?event.delta:undefined,event.at])])).digest('hex');
+    let emotion=this.emotionReplayCache.get(replayKey);
+    if(!emotion){
+      emotion=createEmotion(initialTime,character.emotion,emotionIdentitySeed(scope,characterId));
+      for(const event of events)emotion=event.body!==undefined
+        ?validateEmotionState(event.stored??JSON.parse(event.body))
+        :advanceEmotion(emotion,event.delta,event.at!,character.emotion);
+      this.emotionReplayCache.delete(replayKey);
+      this.emotionReplayCache.set(replayKey,emotion);
+      if(this.emotionReplayCache.size>64)this.emotionReplayCache.delete(this.emotionReplayCache.keys().next().value!);
+    }
+    const clock=this.interactions.modeOf(scope)?this.interactions.clock(scope,now):null;
+    return emotionAt(emotion,this.emotionTime(scope,state.sources,now),character.emotion,
+      clock===null?this.worldSettings(scope)?.mode==='story'?'UTC':null:clock.known?clock.timeZone:null);
   }
 
   /** Expression uses one explicit addressee, never the legacy global relation. */
@@ -599,6 +724,15 @@ export class SceneAuthority {
   }
 
   worldSettings(scope:SceneScope):WorldSettings|null {
+    let settings=this.rawWorldSettings(scope);
+    if(!settings&&this.interactions.isTavernRoleplay(scope)){
+      const state=this.state(scope);
+      if(state.version)settings=initialStorySettings(state,this.transfer.references(scope),this.interactions.get(scope,'sillytavern').timeZone);
+    }
+    return settings?this.initialization.mergeAssets(scope,settings):null;
+  }
+
+  private rawWorldSettings(scope:SceneScope):WorldSettings|null {
     const row=this.db.prepare('SELECT settings FROM scene_world_settings WHERE scope=?').get(scopeKey(scope)) as {settings:string}|undefined;
     return row?JSON.parse(row.settings):null;
   }
@@ -613,7 +747,7 @@ export class SceneAuthority {
         if(Object.keys(value.actorLabels).some(id=>!known.has(id)))throw new Error('invalid_world_actor');
         foldWorldState(value,[]);
       }
-      if(JSON.stringify(this.worldSettings(scope))===JSON.stringify(value))return {version:state.version};
+      if(JSON.stringify(this.rawWorldSettings(scope))===JSON.stringify(value))return {version:state.version};
       if(captureCheckpoint)this.lifecycle.checkpoint(scope,'世界初始设置变更',{automatic:true});
       this.processing.clearScope(scope);
       if(value)this.db.prepare('INSERT OR REPLACE INTO scene_world_settings VALUES(?,?,?)').run(scopeKey(scope),JSON.stringify(value),value.startTimeMs);
@@ -628,9 +762,9 @@ export class SceneAuthority {
   world(scope:SceneScope,readerId?:string,now=Date.now(),state=this.state(scope)) {
     const settings=this.worldSettings(scope);
     if(!settings)return null;
-    const row=this.db.prepare('SELECT clock_floor FROM scene_world_settings WHERE scope=?').get(scopeKey(scope)) as {clock_floor:number};
-    const folded=foldWorldState(settings,this.worldSources(state.sources),{nowMs:now,monotonicFloorMs:row.clock_floor});
-    if(settings.mode==='companion'&&folded.state.timeMs>row.clock_floor)this.db.prepare('UPDATE scene_world_settings SET clock_floor=? WHERE scope=?').run(folded.state.timeMs,scopeKey(scope));
+    const row=this.db.prepare('SELECT clock_floor FROM scene_world_settings WHERE scope=?').get(scopeKey(scope)) as {clock_floor:number}|undefined;
+    const folded=foldWorldState(settings,this.worldSources(state.sources),{nowMs:now,monotonicFloorMs:row?.clock_floor??settings.startTimeMs});
+    if(settings.mode==='companion'&&row&&folded.state.timeMs>row.clock_floor)this.db.prepare('UPDATE scene_world_settings SET clock_floor=? WHERE scope=?').run(folded.state.timeMs,scopeKey(scope));
     return readerId===undefined?folded:projectWorldState(folded,readerId);
   }
 
@@ -818,7 +952,7 @@ export class SceneAuthority {
     });
   }
   /** Rebuild local neural snapshots only from recorded accepted candidates. */
-  private rebuildEmotionStates(scope:SceneScope):boolean {
+  private rebuildEmotionStates(scope:SceneScope,onlyCharacterId?:string):boolean {
     const state=this.state(scope),key=scopeKey(scope);
     let changed=false;
     // Validate one persisted group at a time; ordinary scene state holds none.
@@ -828,8 +962,10 @@ export class SceneAuthority {
       const obsolete:string[]=[];
       for(const row of rows) {
         const actorId=String(row.key);
+        if(onlyCharacterId&&actorId!==onlyCharacterId)continue;
         validateStoredEmotionStates({[actorId]:JSON.parse(String(row.value))});
-        if(source.status!=='accepted'||source.processing!=='ready'||!source.analysis?.plan||!source.analysis.characters[actorId])obsolete.push(actorId);
+        if(source.status!=='accepted'||source.processing!=='ready'||!source.analysis?.plan||!source.analysis.characters[actorId]||
+          source.analysis.emotionPendingIds?.includes(actorId))obsolete.push(actorId);
       }
       for(const actorId of obsolete){
         this.db.prepare("UPDATE scene_sources SET analysis=json_set(analysis,'$.emotionStates',json_patch(json_extract(analysis,'$.emotionStates'),json_object(?,NULL))) WHERE scope=? AND id=?")
@@ -838,12 +974,12 @@ export class SceneAuthority {
       }
     }
     // Replaying one role across its history avoids an all-NPC neural map.
-    for(const character of state.roster.characters) {
+    for(const character of state.roster.characters.filter(item=>!onlyCharacterId||item.id===onlyCharacterId)) {
       let emotion=createEmotion(this.emotionTime(scope,[],state.createdAtMs),character.emotion,emotionIdentitySeed(scope,character.id));
       for(const [index,source] of state.sources.entries()) {
         if(source.status!=='accepted'||source.processing!=='ready'||!source.analysis?.plan)continue;
         const candidate=source.analysis.characters[character.id];
-        if(!candidate)continue;
+        if(!candidate||source.analysis.emotionPendingIds?.includes(character.id))continue;
         emotion=advanceEmotion(emotion,candidate.emotion,this.emotionTime(scope,state.sources.slice(0,index+1),source.acceptedAtMs),character.emotion);
         const body=JSON.stringify(validateEmotionState(emotion));
         const previous=this.db.prepare("SELECT j.value AS body FROM scene_sources s,json_each(s.analysis,'$.emotionStates') j WHERE s.scope=? AND s.id=? AND j.key=?")
@@ -904,6 +1040,10 @@ function localAnalysis(value:SceneAnalysis,source:SceneSource):SceneAnalysis {
   const characters=Object.fromEntries(Object.entries(input.characters).map(([id,analysis])=>[id,
     {...analysis,emotion:{...analysis.emotion,stableRelationDelta:{}}}]));
   return {plan:input.plan,characters,
+    ...(input.skippedStages===undefined?{}:{skippedStages:input.skippedStages}),
+    ...(input.emotionSchedule===undefined?{}:{emotionSchedule:input.emotionSchedule}),
+    ...(input.emotionPendingIds===undefined?{}:{emotionPendingIds:input.emotionPendingIds}),
+    ...(input.emotionCandidateReadyIds===undefined?{}:{emotionCandidateReadyIds:input.emotionCandidateReadyIds}),
     ...(expectation===undefined?{}:{contactResponseExpectation:expectation}),
     ...(absence===undefined?{}:{absenceExplanation:absence}),
     ...(input.worldEffects===undefined?{}:{worldEffects:input.worldEffects}),

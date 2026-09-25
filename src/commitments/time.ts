@@ -4,7 +4,18 @@ interface DateParts {year:number;month:number;day:number;hour:number;minute:numb
 /** Resolve only explicit, bounded forms. Null means the phrase lacks enough deterministic time information. */
 export function resolveCommitmentTime(quote:string,context:DeadlineTimeContext):number|null {
   if(typeof quote!=='string'||!quote.trim()||quote.length>200)return null;
-  const value=quote.trim();
+  let value=quote.trim();
+  // A single explicit reschedule keeps its stated day and, when omitted on
+  // the new clock, its period. Never guess from an unrelated old record.
+  const change=/^(今天|明天)\s*(清晨|早上|上午|中午|下午|傍晚|晚上|凌晨)?\s*([^改换调整]+?)(?:改为|改到|改成|调整为|调整到|换成)\s*(.+)$/.exec(value);
+  if(change){
+    const oldClock=localClock((change[2]??'')+change[3]!.trim());
+    const replacement=change[4]!.trim();
+    const newClock=localClock(replacement);
+    if(!oldClock||!newClock)return null;
+    const hasPeriod=/^(清晨|早上|上午|中午|下午|傍晚|晚上|凌晨)/.test(replacement);
+    value=change[1]+(hasPeriod?'':change[2]??'')+replacement;
+  }
   const iso=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-](\d{2}):(\d{2}))$/.exec(value);
   if(iso){
     const [year,month,day,hour,minute,second,offsetHour,offsetMinute]=[iso[1],iso[2],iso[3],iso[4],iso[5],iso[6]??'0',iso[9]??'0',iso[10]??'0'].map(Number);

@@ -95,9 +95,11 @@ export class Commitments {
     });
   }
 
-  list(scope: SceneScope, query: CommitmentQuery = {}): CommitmentRecord[] {
-    const records = (this.db.prepare('SELECT body FROM commitment_records WHERE scope=? ORDER BY rowid')
-      .all(scopeKey(scope)) as unknown as StoredRecordRow[]).map(row => JSON.parse(row.body) as CommitmentRecord);
+  list(scope: SceneScope, query: CommitmentQuery = {}, orderedSources?: readonly CommitmentSource[]): CommitmentRecord[] {
+    const records = orderedSources===undefined
+      ? (this.db.prepare('SELECT body FROM commitment_records WHERE scope=? ORDER BY rowid')
+        .all(scopeKey(scope)) as unknown as StoredRecordRow[]).map(row => JSON.parse(row.body) as CommitmentRecord)
+      : foldCommitments(scope,orderedSources);
     const needle = query.text?.toLocaleLowerCase();
     return records.filter(record =>
       (query.mode === undefined || record.mode === query.mode) &&
@@ -124,8 +126,9 @@ export class Commitments {
   projectPersistent(
     scope: SceneScope,
     input: { characterId: string; purpose: 'decision' | 'expression' | 'director'; mode: 'roleplay' | 'companion' },
+    orderedSources?: readonly CommitmentSource[],
   ): PersistentProjection {
-    const records = this.list(scope, {readerId: input.characterId, status: 'active', mode: input.mode})
+    const records = this.list(scope, {readerId: input.characterId, status: 'active', mode: input.mode},orderedSources)
       .filter(record => record.term.kind === 'persistent' &&
         (record.participants.includes(input.characterId) || record.obligors.includes(input.characterId)));
     const entries = records.map(record => ({
@@ -150,12 +153,19 @@ export class Commitments {
     scope: SceneScope,
     clocks: { realNowMs: number; storyNowMs: number },
     mode: 'roleplay' | 'companion',
+    orderedSources?: readonly CommitmentSource[],
   ): CommitmentTodo[] {
     assertClock(clocks.realNowMs); assertClock(clocks.storyNowMs);
-    const rows = this.db.prepare(`SELECT commitment_id,revision,mode,clock,due_at,remind_at,obligor
+    const rows = orderedSources===undefined?this.db.prepare(`SELECT commitment_id,revision,mode,clock,due_at,remind_at,obligor
       FROM commitment_todos WHERE scope=? AND mode=? ORDER BY due_at,commitment_id,obligor`).all(scopeKey(scope),mode) as unknown as Array<{
         commitment_id: string; revision: number; mode: 'roleplay' | 'companion'; clock: 'real' | 'story'; due_at: number; remind_at: number; obligor: string;
-      }>;
+      }>:foldCommitments(scope,orderedSources).flatMap(record=>{
+        const term=record.term;
+        return record.mode===mode&&record.status==='active'&&term.kind==='deadline'
+          ?record.obligors.map(obligor=>({commitment_id:record.id,revision:record.revision,mode,clock:term.clock,
+            due_at:term.dueAtMs,remind_at:term.remindAtMs??term.dueAtMs,obligor})):[];
+      })
+        .sort((a,b)=>a.due_at-b.due_at||a.commitment_id.localeCompare(b.commitment_id)||a.obligor.localeCompare(b.obligor));
     return rows.flatMap(row => {
       const now = row.clock === 'real' ? clocks.realNowMs : clocks.storyNowMs;
       if (now < row.remind_at) return [];
@@ -229,7 +239,10 @@ function applyOperation(
     if(target.status==='active')return;
     if(target.status!=='proposed')throw new Error('invalid_commitment_target');
     target.consentActorIds=[...new Set([...(target.consentActorIds??[]),...actors])];
-    if(requiredConsent(target.agreement,target.participants,target.obligors).every(actor=>target.consentActorIds!.includes(actor)))target.status='active';
+    if(requiredConsent(target.agreement,target.participants,target.obligors).every(actor=>target.consentActorIds!.includes(actor))){
+      if(target.replaces)supersedeReplaced(records,target,operation);
+      target.status='active';
+    }
     target.revision+=1;
     target.latestSourceId=operation.sourceId;
     target.latestSourceRevision=operation.sourceRevision;
@@ -244,6 +257,12 @@ function applyOperation(
     if (operation.targetId && !target) return;
     if(target&&operation.targetId)assertTargetBinding(target,operation);
     if (target && target.mode !== operation.mode) throw new Error('invalid_commitment_mode');
+    if(operation.action==='propose'&&target){
+      if(target.status!=='active'||id===target.id||operation.targetRevision===undefined||
+        operation.agreement!==target.agreement||!sameActors(operation.participants!,target.participants)||
+        !sameActors(operation.obligors!,target.obligors)||operation.readers!.some(reader=>!target.readers.includes(reader))||
+        operation.evidence.some(item=>!target.participants.includes(item.actorId)))throw new Error('invalid_commitment_target');
+    }
     if (operation.action === 'revise') {
       if (!target || target.status !== 'active' || id === target.id) throw new Error('invalid_commitment_revision');
       assertEvidenceConsent(target, operation);
@@ -253,6 +272,7 @@ function applyOperation(
       target.latestSourceRevision = operation.sourceRevision;
     } else if (operation.action === 'establish' && target) {
       if (target.status !== 'proposed') throw new Error('invalid_commitment_target');
+      if(target.replaces)throw new Error('invalid_commitment_target');
       if (id !== target.id) {
         target.status = 'superseded';
         target.revision += 1;
@@ -282,6 +302,7 @@ function applyOperation(
       latestSourceRevision: operation.sourceRevision,
       consentActorIds:[...new Set(operation.evidence.map(evidence=>evidence.actorId).filter(actor=>operation.participants!.includes(actor)))],
       ...(operation.action === 'revise' || (target && target.id !== id) ? {replaces: target!.id} : {}),
+      ...(operation.action==='propose'&&target?{replacesRevision:target.revision}:{}),
     };
     records.set(id, created);
     return;
@@ -309,6 +330,23 @@ function applyOperation(
   target.revision += 1;
   target.latestSourceId = operation.sourceId;
   target.latestSourceRevision = operation.sourceRevision;
+}
+
+function supersedeReplaced(records:Map<string,CommitmentRecord>,proposal:CommitmentRecord,operation:ValidatedCommitmentOperation):void{
+  const old=records.get(proposal.replaces!);
+  if(!old||old.status!=='active'||old.revision!==proposal.replacesRevision)
+    throw new Error('invalid_commitment_target_revision');
+  if(old.mode!==proposal.mode||old.agreement!==proposal.agreement||
+    !sameActors(old.participants,proposal.participants)||!sameActors(old.obligors,proposal.obligors))
+    throw new Error('invalid_commitment_target');
+  old.status='superseded';
+  old.revision+=1;
+  old.latestSourceId=operation.sourceId;
+  old.latestSourceRevision=operation.sourceRevision;
+}
+
+function sameActors(left:readonly string[],right:readonly string[]):boolean{
+  return left.length===right.length&&left.every(actor=>right.includes(actor));
 }
 
 function assertTargetBinding(record:CommitmentRecord,operation:ValidatedCommitmentOperation):void {

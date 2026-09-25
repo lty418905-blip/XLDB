@@ -2,8 +2,9 @@ import {createHash} from 'node:crypto';
 import type {DatabaseSync} from 'node:sqlite';
 import {PersonalWeightsStore,personalScopeKey,type LearningTrace} from './personal-weights.ts';
 import type {SceneScope,SceneSource} from '../scene/types.ts';
-import {decodeRelationshipEvidence} from './relationship-evidence.ts';
-import {METRIC_LEVELS} from './agentjev.ts';
+import {currentUncontestedRelationshipEvidence,decodeRelationshipEvidence,relationshipDomain,
+  resolveRelationshipLevel} from './relationship-evidence.ts';
+import {METRIC_LEVELS,relationshipSupportQuestion} from './agentjev.ts';
 import type {RelationshipAssessment,RelationshipAssessmentInput,RelationshipMetric} from './relationship-assessment.ts';
 
 export interface LearningEvaluator {
@@ -81,6 +82,9 @@ export class PersonalLearning {
   }
   jobCurrent(job:LearningJob,sourceId?:string,revision?:number):boolean {
     if(this.token(job.scopeKey)!==job.token)return false;
+    const queued=this.db.prepare(`SELECT payload FROM companion_learning_jobs WHERE scope_key=? AND job_key=? AND token=?`)
+      .get(job.scopeKey,job.jobKey,job.token) as {payload:string}|undefined;
+    if(!queued||queued.payload!==job.payload)return false;
     const row=this.db.prepare('SELECT sources FROM companion_learning_state WHERE scope_key=?').get(job.scopeKey) as
       {sources:string}|undefined;
     if(!row)return false;
@@ -117,7 +121,9 @@ export class PersonalLearning {
       .run(key,JSON.stringify(sources.map(s=>({id:s.id,revision:s.revision}))),controlsRevision);
   }
   captureDelivery(key:string,deliveryId:string,traces:LearningTrace[]){
-    const relevant=traces.filter(t=>t.questionId==='experience'||t.questionId==='longingExperience');
+    const relevant=traces.filter(t=>t.requestId==='contact'&&
+      (t.questionId==='clearHelp'||t.questionId==='clearHarm')||
+      t.requestId==='quiet-exception'&&t.questionId==='longingExperience');
     if(!relevant.length)return;
     this.weights.capture({scopeKey:key,taskType:'contact',bindingId:deliveryId,traces:relevant});
     this.db.prepare('INSERT OR IGNORE INTO companion_learning_deliveries VALUES(?,?)').run(key,deliveryId);
@@ -137,10 +143,7 @@ export class PersonalLearning {
       if(correctionId)this.db.prepare('INSERT OR REPLACE INTO companion_learning_corrections VALUES(?,?,?)').run(key,metric,correctionId);
     }
     if(changed){
-      this.bumpToken(key);this.weights.reset(key,'relationship');
-      const models=this.db.prepare(`SELECT DISTINCT json_extract(trace,'$.modelIdentity') AS model
-        FROM companion_personal_samples WHERE scope_key=? AND task_type='contact'`).all(key) as {model:string}[];
-      for(const {model} of models)if(model)this.queue(key,`contact:${model}`,'contact',{modelIdentity:model});
+      this.db.prepare(`DELETE FROM companion_learning_jobs WHERE scope_key=? AND task_type='relationship'`).run(key);
     }
   }
   contactFeedback(key:string,sources:readonly SceneSource[],modelIdentity:string){
@@ -153,7 +156,9 @@ export class PersonalLearning {
       const label=explicitContactFeedback(reply.text);if(!label)continue;
       for(const trace of this.weights.captured(key,'contact',binding.id)){
         if(trace.modelIdentity!==modelIdentity||this.weights.hasFeedback(key,'contact',reply.id,reply.revision,trace.questionId))continue;
-        if(this.weights.recordFeedback({trace,labelKey:label,sourceId:reply.id,sourceRevision:reply.revision,kind:'explicit'}))
+        const labelKey=trace.questionId==='clearHelp'?(label==='positive'?'yes':'no'):
+          trace.questionId==='clearHarm'?(label==='negative'?'yes':'no'):label;
+        if(this.weights.recordFeedback({trace,labelKey,sourceId:reply.id,sourceRevision:reply.revision,kind:'explicit'}))
           this.queue(key,`contact:${modelIdentity}`,'contact',{modelIdentity});
       }
     }
@@ -161,42 +166,71 @@ export class PersonalLearning {
   relationship(key:string,input:RelationshipAssessmentInput,raw:unknown,
     correction:RelationshipAssessment|null,assertCurrent:()=>void){
     assertCurrent();
-    const extraction=decodeRelationshipEvidence(raw,input);
+    const extraction=decodeRelationshipEvidence(raw,input,{allowLegacy:false});
     this.synchronizeCorrections(key,correction);
     const userSources=input.sources.filter(s=>s.role==='user');
+    const usableItems=currentUncontestedRelationshipEvidence(extraction,input);
     // Repeated, source-grounded observations are weak supervision, never model scores.
-    type Candidate={metric:string;level:number;sourceId:string;revision:number;kind:'explicit'|'behavior';evidence:{quote:string}[];domain:string};
+    type Candidate={metric:string;level:number;sourceId:string;revision:number;kind:'explicit'|'behavior';
+      evidence:{kind:string;domain:string;ref:string;quote:string}[];domain:string};
     const candidates=Object.entries(GROUPS).flatMap<Candidate>(([metric,kinds])=>{
       const fixed=correction?.metrics[metric as RelationshipMetric];
-      if(fixed?.corrected&&fixed.score!==null){
+      if(fixed?.corrected){
+        if(fixed.score===null)return [];
         return [{metric,level:fixed.score,sourceId:correctionSource(metric,fixed.score,fixed.rationale),revision:1,kind:'explicit' as const,
-          evidence:[{quote:fixed.rationale}],domain:'用户明确纠正'}];
+          evidence:[{kind:'user_correction',domain:'用户明确纠正',
+            ref:`${correctionSource(metric,fixed.score,fixed.rationale)}@1`,quote:fixed.rationale}],domain:'用户明确纠正'}];
       }
-      const items=extraction.items.filter(item=>kinds!.includes(item.eventKind)&&item.attribution==='self'&&
-        item.polarity==='affirmed'&&item.timeBasis==='current'&&userSources.some(s=>s.id===item.ref.sourceId));
+      const items=usableItems.filter(item=>kinds!.includes(item.eventKind)&&userSources.some(s=>s.id===item.ref.sourceId));
       const domains=new Map<string,typeof items>();for(const item of items)domains.set(item.domain,[...(domains.get(item.domain)??[]),item]);
       return [...domains].flatMap(([domain,group])=>{
-        const levels=[...new Set(group.map(item=>kinds!.indexOf(item.eventKind)))];
-        if(levels.length!==1||new Set(group.map(i=>i.ref.sourceId)).size<2)return [];
+        const level=resolveRelationshipLevel(metric as RelationshipMetric,group);
+        if(level===null||new Set(group.map(i=>i.ref.sourceId)).size<2)return [];
         const latest=group.at(-1)!;
-        return [{metric,level:levels[0],sourceId:latest.ref.sourceId,revision:latest.ref.revision,kind:'behavior' as const,
-          evidence:group.slice(-3).map(i=>({quote:i.ref.quote})),domain}];
+        return [{metric,level,sourceId:latest.ref.sourceId,revision:latest.ref.revision,kind:'behavior' as const,
+          evidence:group.slice(-3).map(i=>({kind:i.eventKind,domain:i.domain,
+            ref:`${i.ref.sourceId}@${i.ref.revision}`,quote:i.ref.quote})),domain}];
       });
     });
-    const pending=candidates.filter(c=>!this.weights.hasFeedback(key,'relationship',c.sourceId,c.revision,`${c.metric}:${c.domain}`));
-    if(!pending.length)return;
-    for(const candidate of pending){
-    const state=JSON.stringify({metric:candidate.metric,domain:candidate.domain,evidence:candidate.evidence,
-      observed:interactionBehaviorSummary(input.sources),
-      clock:input.auxiliaryContext?.clock,context:'行为频率仅为背景，不单独证明亲密、信任或依赖'});
-    if(state.length>1600)continue;
-    const payload={requests:[{id:candidate.metric,state,questions:[{
-      id:`${candidate.metric}:${candidate.domain}`,type:'choice',question:`所给来源在${candidate.domain}中支持哪一类${candidate.metric}行为？不超出原文推断。`,
-      options:Object.fromEntries([['unknown','证据仍不足'],...METRIC_LEVELS[candidate.metric as RelationshipMetric].map((label,index)=>[String(index),label])])}]}]};
-    assertCurrent();
-    this.queue(key,`relationship:${candidate.metric}:${candidate.domain}:${candidate.sourceId}`,'relationship',
-      {request:payload,sourceId:candidate.sourceId,sourceRevision:candidate.revision,
-        labelKey:String(candidate.level),kind:candidate.kind});
+    const active:{sourceId:string;sourceRevision:number;questionId:string}[]=[];
+    for(const candidate of candidates){
+      for(const level of [candidate.level,...(candidate.level<METRIC_LEVELS[candidate.metric as RelationshipMetric].length-1?
+        [candidate.level+1]:[])])active.push({sourceId:candidate.sourceId,sourceRevision:candidate.revision,
+          questionId:`rbool4:${candidate.metric}:${candidate.domain}:${level}`});
+    }
+    const correctedMetrics=Object.keys(GROUPS).filter(metric=>
+      correction?.metrics[metric as RelationshipMetric]?.corrected);
+    const invalidDomains=extraction.items.filter(item=>item.attribution==='self'&&item.polarity==='negated'&&
+      item.timeBasis==='current'&&!item.retracts&&(!item.support||item.support.verdict==='direct')&&
+      userSources.some(source=>source.id===item.ref.sourceId&&source.revision===item.ref.revision))
+      .flatMap(item=>Object.entries(GROUPS).filter(([,kinds])=>kinds!.includes(item.eventKind))
+        .map(([metric])=>({metric,domain:relationshipDomain(item)})));
+    const pruned=this.weights.pruneRelationshipSamples(key,{active,
+      visibleSourceIds:input.sources.map(source=>source.id),correctedMetrics,invalidDomains});
+    // The evidence set may change while its accepted sources stay at the same revision.
+    this.db.prepare(`DELETE FROM companion_learning_jobs WHERE scope_key=? AND task_type='relationship'`).run(key);
+    for(const candidate of candidates){
+      const state=JSON.stringify({mode:'relationship-ambiguity',metric:candidate.metric,evidence:candidate.evidence});
+      if(state.length>1600)continue;
+      const levels=[{level:candidate.level,label:'true'},
+        ...(candidate.level<METRIC_LEVELS[candidate.metric as RelationshipMetric].length-1?
+          [{level:candidate.level+1,label:'false'}]:[])];
+      for(const target of levels){
+        const questionId=`rbool4:${candidate.metric}:${candidate.domain}:${target.level}`;
+        if(this.weights.hasFeedback(key,'relationship',candidate.sourceId,candidate.revision,questionId))continue;
+        const payload={requests:[{id:candidate.metric,state,questions:[
+          relationshipSupportQuestion(candidate.metric as RelationshipMetric,target.level,questionId)]}]};
+        assertCurrent();
+        this.queue(key,`relationship-binary-v4:${candidate.metric}:${candidate.domain}:${candidate.sourceId}:${target.level}`,
+          'relationship',{request:payload,sourceId:candidate.sourceId,sourceRevision:candidate.revision,
+            labelKey:target.label,kind:candidate.kind});
+      }
+    }
+    if(!this.db.prepare(`SELECT 1 FROM companion_learning_jobs WHERE scope_key=? AND task_type='relationship' LIMIT 1`)
+      .get(key))for(const modelIdentity of pruned.modelIdentities){
+      const remaining=this.db.prepare(`SELECT 1 FROM companion_personal_samples WHERE scope_key=?
+        AND task_type='relationship' AND json_extract(trace,'$.modelIdentity')=? LIMIT 1`).get(key,modelIdentity);
+      if(remaining)this.queue(key,`relationship-train:${modelIdentity}`,'relationship',{modelIdentity});
     }
   }
 }

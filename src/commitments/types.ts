@@ -110,12 +110,16 @@ export interface CommitmentRecord {
   latestSourceRevision: number;
   consentActorIds?: string[];
   replaces?: string;
+  /** Revision of the still-active commitment when this replacement was proposed. */
+  replacesRevision?: number;
 }
 
 export interface CommitmentTargetCandidate {
   id:string;
   revision:number;
   status:'proposed'|'active';
+  /** Only a proposed replacement carries the old active target id. */
+  replaces?:string;
   agreement:CommitmentAgreement;
   content:string;
   participants:string[];
@@ -129,7 +133,7 @@ export interface CommitmentTargetCandidate {
   missingConsentActorIds:string[];
   adjacent:boolean;
   contactRestriction?:ContactRestriction;
-  allowedActions:Array<'confirm'|'revise'|'fulfill'|'cancel'|'harden'>;
+  allowedActions:Array<'propose'|'confirm'|'revise'|'fulfill'|'cancel'|'harden'>;
 }
 
 export interface CommitmentQuery {

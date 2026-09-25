@@ -7,6 +7,8 @@ import {selectWholeContactFacts} from './relationship-context.ts';
 export interface ContactSource {id:string;revision:number;role:'user'|'assistant';text:string;acceptedAtMs:number}
 export interface ContactContext {
   clock:{nowMs:number;utcIso:string;timeZone:string;localDateTime:string;weekday:string};
+  /** Only the latest accepted direct user source may establish an active sleep boundary. */
+  sleepBoundary:{sourceRef:string;acceptedAtMs:number}|null;
   waiting:{phase:'waiting'|'returning';sentAtMs:number;sourceId:string;absence:string;feelings:ContactAffect['feelings'];
     needsClarification:boolean;explanations:{ref:string;quote:string}[];currentExplanation?:string}|null;
   interaction:{windowStartMs:number;windowEndMs:number;summary:string;sourceRefs:string[]};
@@ -61,6 +63,7 @@ export function contactContext(input:{sources:readonly ContactSource[];nowMs:num
   affect?:ContactAffect|null}):ContactContext {
   const affect=input.affect;
   const result:ContactContext={clock:contactClock(input.nowMs,input.timeZone),
+    sleepBoundary:explicitSleepBoundary(input.sources),
     waiting:affect?.episode&&affect.phase!=='none'?{phase:affect.phase,sentAtMs:affect.episode.sentAtMs,
       sourceId:affect.episode.deliveryId,absence:affect.absence??'uncertain',feelings:affect.feelings,
       needsClarification:Boolean(affect.needsClarification),
@@ -89,6 +92,24 @@ export function contactContext(input:{sources:readonly ContactSource[];nowMs:num
     commitments:selected.excluded.commitmentRefs.length};
   if(JSON.stringify(result).length>2400)throw new Error('contact_context_too_large');
   return result;
+}
+
+export function explicitSleepBoundary(sources:readonly ContactSource[]):ContactContext['sleepBoundary'] {
+  let latest:ContactSource|undefined;
+  for(const source of sources)if(source.role==='user'&&(!latest||source.acceptedAtMs>=latest.acceptedAtMs))latest=source;
+  if(!latest)return null;
+  // Require a direct, current statement. A habit, quoted speech, denial, or an older
+  // bedtime followed by a new user message cannot establish this boundary.
+  const text=latest.text.replace(/“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』|"[^"]*"|'[^']*'/gu,'').trim();
+  const direct=/(?:^|[。！？\n])\s*(?:(?:我|我现在|我先|我要|我得|现在|先)\s*(?:去|要|准备)?\s*睡(?:觉)?(?:了)?|晚安)(?:[，。！？\s]|$)/u;
+  const match=direct.exec(text);
+  if(!match)return null;
+  const following=text.slice(match.index+match[0].length);
+  // A future plan (e.g. “明早继续工作”) is not a retraction of going to sleep now.
+  const currentRetraction=/^(?:(?:但是|不过|其实|但)\s*)?(?:我)?(?:现在|目前|这会儿|此刻)?(?:没睡|不睡|还醒着|醒了|(?:还要|还得|还在|正在|继续)(?:继续)?(?:工作|加班|忙|学习))/u;
+  const deniedSleep=/^(?:(?:但是|不过|其实|但)\s*)?(?:我)?(?:不是说|并非|不表示|没说).{0,12}(?:睡|休息)/u;
+  if(following.split(/[，,。；;！？!?\n]/u).some(clause=>currentRetraction.test(clause.trim())||deniedSleep.test(clause.trim())))return null;
+  return {sourceRef:`${latest.id}@${latest.revision}`,acceptedAtMs:latest.acceptedAtMs};
 }
 
 export function contactClock(nowMs:number,timeZone:string):ContactContext['clock'] {

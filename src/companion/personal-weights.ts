@@ -189,6 +189,35 @@ export class PersonalWeightsStore {
     return Number(result.changes);
   }
 
+  pruneRelationshipSamples(scopeKey:string,input:{active:readonly {sourceId:string;sourceRevision:number;questionId:string}[];
+    visibleSourceIds:readonly string[];correctedMetrics:readonly string[];
+    invalidDomains:readonly {metric:string;domain:string}[]}):{
+    removed:number;modelIdentities:string[]} {
+    this.checkScope(scopeKey);
+    const current=new Set(input.active.map(item=>JSON.stringify([item.sourceId,item.sourceRevision,item.questionId])));
+    const visible=new Set(input.visibleSourceIds),corrected=new Set(input.correctedMetrics);
+    const invalid=new Set(input.invalidDomains.map(item=>JSON.stringify([item.metric,item.domain])));
+    const rows=this.db.prepare(`SELECT source_id,source_revision,question_id,trace FROM companion_personal_samples
+      WHERE scope_key=? AND task_type='relationship'`).all(scopeKey) as Array<{
+      source_id:string;source_revision:number;question_id:string;trace:string}>;
+    let removed=0;const models=new Set<string>();
+    for(const row of rows){
+      if(current.has(JSON.stringify([row.source_id,row.source_revision,row.question_id])))continue;
+      const trace=JSON.parse(row.trace) as LearningTrace;
+      const obsoleteContract=!row.question_id.startsWith('rbool4:');
+      let domain:string|undefined;
+      try{domain=JSON.parse(trace.state).evidence?.[0]?.domain;}catch{/* Old trace without structured evidence. */}
+      if(!obsoleteContract&&!visible.has(row.source_id)&&!corrected.has(trace.requestId)&&
+        !invalid.has(JSON.stringify([trace.requestId,domain])))continue;
+      this.db.prepare(`DELETE FROM companion_personal_samples WHERE scope_key=? AND task_type='relationship'
+        AND source_id=? AND question_id=?`).run(scopeKey,row.source_id,row.question_id);
+      this.invalidate(scopeKey,'relationship',personalHeadKey(trace)??undefined);
+      models.add(trace.modelIdentity);
+      removed++;
+    }
+    return {removed,modelIdentities:[...models]};
+  }
+
   reset(scopeKey:string,taskType?:PersonalTaskType):void {
     this.checkScope(scopeKey);if(taskType)checkTask(taskType);
     for(const table of ['companion_personal_samples','companion_personal_weights','companion_personal_captures']){
@@ -323,10 +352,19 @@ export class PersonalWeightsStore {
 function checkTask(taskType:PersonalTaskType):void {
   if(taskType!=='contact'&&taskType!=='relationship')throw new Error('invalid_personal_task');
 }
-export function personalHeadKey(trace:Pick<LearningTrace,'taskType'|'requestId'|'questionId'>):string|null {
-  if(trace.taskType==='contact')return trace.questionId==='experience'||trace.questionId==='longingExperience'
-    ?trace.questionId:null;
-  if(trace.taskType==='relationship')return trace.requestId||null;
+export function personalHeadKey(trace:Pick<LearningTrace,'taskType'|'requestId'|'questionId'|'keys'>):string|null {
+  if(trace.taskType==='contact'){
+    if(trace.requestId==='contact'&&(trace.questionId==='clearHelp'||trace.questionId==='clearHarm')&&
+      trace.keys.length===2&&trace.keys[0]==='yes'&&trace.keys[1]==='no')
+      return `contact-evidence-v1:${trace.questionId}`;
+    return trace.questionId==='experience'||trace.questionId==='longingExperience'?trace.questionId:null;
+  }
+  if(trace.taskType==='relationship')return trace.requestId?
+    `${trace.keys.length===2&&trace.keys[0]==='true'&&trace.keys[1]==='false'?
+      trace.questionId.startsWith('rbool1:')?'relationship-binary-v1':
+      trace.questionId.startsWith('rbool2:')?'relationship-binary-v2':
+        trace.questionId.startsWith('rbool3:')?'relationship-binary-v3':'relationship-binary-v4':
+      'relationship-choice-v0'}:${trace.requestId}`:null;
   return null;
 }
 function validateTrace(trace:LearningTrace):void {

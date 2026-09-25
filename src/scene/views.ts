@@ -87,7 +87,33 @@ export function viewsOf(
   }));
   const fragments = new Map(segmentOutward(message.text).map((fragment, index) =>
     [fragment.ref, { ...fragment, index }] as const));
-  const root = exactRecord(raw, ['views', 'unresolved'], 'invalid_scene_views');
+  const candidateRoot=record(raw,'invalid_scene_views');
+  const root = exactRecord(raw, ['views', 'unresolved',...['presentation','requests'].filter(key=>Object.hasOwn(candidateRoot,key))], 'invalid_scene_views');
+  const generationRequests:Record<string,string>={};
+  if(root.requests!==undefined){
+    const requests=record(root.requests,'invalid_scene_request');
+    if(message.role!=='user'&&Object.keys(requests).length)fail('invalid_scene_request');
+    for(const [key,refs] of Object.entries(requests)){
+      const character=characters.get(key);
+      if(!character||!Array.isArray(refs)||!refs.length||refs.length>16)fail('invalid_scene_request');
+      const selected=refs.map(ref=>typeof ref==='string'?fragments.get(ref):undefined);
+      if(selected.some((fragment,index)=>!fragment||(index>0&&fragment.index!==selected[index-1]!.index+1)))fail('invalid_scene_request');
+      const quote=quoteOf(message.text,selected as BoundFragment[]);
+      if(quote.length>2048)fail('invalid_scene_request');
+      generationRequests[character.id]=quote;
+    }
+  }
+  let presentation:PerspectivePlan['presentation'];
+  if(root.presentation!==undefined){
+    const style=exactRecord(root.presentation,['sentenceCount','dialogueOnly','evidenceRefs'],'invalid_scene_presentation');
+    if(style.sentenceCount!==null&&(!Number.isSafeInteger(style.sentenceCount)||Number(style.sentenceCount)<1||Number(style.sentenceCount)>100))fail('invalid_scene_presentation');
+    if(style.dialogueOnly!==null&&typeof style.dialogueOnly!=='boolean')fail('invalid_scene_presentation');
+    if(!Array.isArray(style.evidenceRefs)||style.evidenceRefs.length>16||style.evidenceRefs.some(ref=>typeof ref!=='string'||!fragments.has(ref)))fail('invalid_scene_presentation');
+    if(style.sentenceCount!==null||style.dialogueOnly!==null){
+      if(message.role!=='user'||!style.evidenceRefs.length)fail('invalid_scene_presentation');
+      presentation={sentenceCount:style.sentenceCount as number|null,dialogueOnly:style.dialogueOnly as boolean|null};
+    }
+  }
   const views = record(root.views, 'invalid_scene_views');
   if (Object.keys(views).some(key => !characters.has(key))) fail('invalid_scene_character');
   if (!Array.isArray(root.unresolved) || root.unresolved.length > MAX_UNRESOLVED) fail('invalid_scene_views');
@@ -161,7 +187,7 @@ export function viewsOf(
         ...(identity.identityEvidence.length ? { identityEvidence: identity.identityEvidence } : {}),
       };
     });
-  return { observations, unresolved };
+  return { observations, unresolved,...(presentation?{presentation}:{}),...(Object.keys(generationRequests).length?{generationRequests}:{}) };
 }
 
 function identityFor(

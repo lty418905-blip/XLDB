@@ -37,11 +37,12 @@ export function contextMemories(snapshot:MemorySnapshot,rankedIds:readonly strin
     if(!parentBlocked)addRecent(memory);
   }
   const relevant:MemoryView[]=[];
+  const budgetOmitted=new Set<string>();
   let totalSize=recentSize;
   const addRelevant=(memory:MemoryView):boolean=>{
     if(chosen.has(memory.id))return true;
     const size=JSON.stringify(memory).length;
-    if(totalSize+size>24000)return false;
+    if(totalSize+size>24000){budgetOmitted.add(memory.id);return false;}
     chosen.add(memory.id);relevant.push(memory);totalSize+=size;return true;
   };
   for(const id of rankedIds) {
@@ -49,9 +50,14 @@ export function contextMemories(snapshot:MemorySnapshot,rankedIds:readonly strin
     const memory=byId.get(id);if(!memory)continue;
     let parentBlocked=false;
     for(const parent of linkedParents(memory))if(!addRelevant(parent))parentBlocked=true;
-    if(!parentBlocked)addRelevant(memory);
+    if(!parentBlocked)addRelevant(memory);else budgetOmitted.add(memory.id);
   }
-  return {...all,memories:[...recent,...relevant],recent,relevant,
+  const memories=[...recent,...relevant];
+  return {...all,memories,recent,relevant,
+    grounding:{selectedEvidence:memories.map(memory=>({memoryId:memory.id,sourceId:memory.source.messageId,
+      sourceRevision:memory.source.revision,access:memory.access,
+      kind:memory.source.reference?'reference':memory.source.knowledge?.kind??'memory'})),
+      budgetOmissions:[...budgetOmitted].filter(id=>!chosen.has(id)).length},
     budget:{recentCharacters:recentSize,totalCharacters:totalSize,recentLimit:4000,totalLimit:24000}};
 }
 

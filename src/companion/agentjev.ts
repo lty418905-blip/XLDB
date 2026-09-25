@@ -3,8 +3,8 @@ import {randomUUID,createHash} from 'node:crypto';
 import {existsSync,mkdirSync,readFileSync,openSync,readSync,closeSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {type RelationshipAssessmentTask,type RelationshipMetric} from './relationship-assessment.ts';
-import {decodeRelationshipEvidence,projectRelationshipEvidence,relationshipEvidenceTask} from './relationship-evidence.ts';
+import {hasOpposingDistanceAndCare,type RelationshipAssessmentTask,type RelationshipMetric} from './relationship-assessment.ts';
+import {CURRENT_RELATIONSHIP_EVIDENCE_SCHEMA,decodeRelationshipEvidence,projectRelationshipEvidence,relationshipEvidenceTask} from './relationship-evidence.ts';
 import type {RelationshipEvidenceExtraction} from './relationship-evidence.ts';
 import type {ContactContext} from './contact-context.ts';
 import type {ContactJudgment} from '../scene/companion-flow.ts';
@@ -20,6 +20,13 @@ export const METRIC_LEVELS:Record<RelationshipMetric,readonly string[]>={
   taskDelegation:['用户明确不愿委托任务','用户只允许逐步监督下的小任务','用户允许限定范围的任务','用户反复授权具体重要任务','用户明确授权较大任务并认可已完成结果'],
   userDependency:['用户明确表示不依赖 Agent 并能独立应对','用户明确表示有帮助但可自行处理','用户报告遇事惯常寻求 Agent 支持','用户报告缺少 Agent 时明显难以应对','用户明确报告依赖 Agent 已影响独立生活或其它关系'],
 };
+export function relationshipSupportQuestion(metric:RelationshipMetric,level:number,id=String(level)){
+  if(!Number.isInteger(level)||level<0||level>=METRIC_LEVELS[metric].length)
+    throw new Error('invalid_relationship_level');
+  return {id,type:'boolean' as const,
+    question:`来源原文是否直接且充分支持该关系档位：${METRIC_LEVELS[metric][level]}？只以原文事实判断。`,
+    criteria:{true:'该档位所要求的限定条件都由原文直接支持',false:'原文没有充分支持该档位全部限定条件'}};
+}
 type Question={id:string;type:'choice';question:string;options:Record<string,string>}|
   {id:string;type:'score';question:string;levels:string[]}|
   {id:string;type:'boolean';question:string;criteria?:{true:string;false:string}};
@@ -161,14 +168,16 @@ export class AgentJevClient {
     if(task.schema!=='xldb-relationship-assessment-v2'||!Array.isArray(task.sources))throw new Error('invalid_agentjev_assessment_task');
     if(!extracted&&!this.extractEvidence)throw new Error('relationship_evidence_extractor_required');
     const extraction=decodeRelationshipEvidence(extracted??await this.extractEvidence!(relationshipEvidenceTask(task)),task);
+    if((extraction.receipt||extracted===undefined)&&extraction.schema!==CURRENT_RELATIONSHIP_EVIDENCE_SCHEMA)
+      throw new Error('relationship_evidence_current_contract_required');
     const projection=projectRelationshipEvidence(extraction,task);
     const contextExclusions:Record<string,{profileRefs:string[];commitmentRefs:string[]}>={};
-    const requests:Request[]=Object.entries(projection.ambiguous).map(([metric,ambiguity])=>{
+    const requests:Request[]=Object.entries(projection.ambiguous)
+      .filter(([,ambiguity])=>!hasOpposingDistanceAndCare(ambiguity!.items)).map(([metric,ambiguity])=>{
       const compact=relationshipAmbiguityState(task,metric,ambiguity!.items);
       contextExclusions[metric]=compact.excluded;
-      return {id:metric,state:compact.state,questions:[{id:'level',type:'choice',
-        question:'同一行为片段有多个有证据支持的解释；当前时间与辅助资料只用于理解语境，不新增评分证据。哪一档最符合给定原文？',
-        options:Object.fromEntries([['unknown','证据仍不足'],...ambiguity!.levels.map(level=>[String(level),METRIC_LEVELS[metric as RelationshipMetric][level]])])}]};
+      return {id:metric,state:compact.state,questions:ambiguity!.levels.map(level=>
+        relationshipSupportQuestion(metric as RelationshipMetric,level))};
     });
     const selections:Partial<Record<RelationshipMetric,number>>={};
     let rawDiagnostics:unknown,learningTraces:LearningTrace[]|undefined;
@@ -177,8 +186,9 @@ export class AgentJevClient {
       const reply=outcome?.response??await this.evaluate({requests});
       learningTraces=outcome?.learningTraces;rawDiagnostics={...reply,contextExclusions};
       for(const result of reply.results){
-        const value=result.answers[0]?.value;
-        if(typeof value==='string'&&value!=='unknown')selections[result.id as RelationshipMetric]=Number(value);
+        const ranked=result.answers.map(answer=>({level:Number(answer.id),support:answer.probability??0}))
+          .sort((left,right)=>right.support-left.support);
+        if(ranked[0]?.support>=.5)selections[result.id as RelationshipMetric]=ranked[0].level;
       }
     }
     return {schema:'xldb-relationship-assessment-v2',extraction,selections,rawDiagnostics,learningTraces};
@@ -192,10 +202,14 @@ export class AgentJevClient {
     const candidateBody=input.candidateBody;
     if(candidateBody!==undefined&&(typeof candidateBody!=='string'||!candidateBody.trim()||candidateBody.length>300))
       throw new Error('invalid_agentjev_contact_input');
+    if(input.context.sleepBoundary)return {experience:'negative',emotion:'uncertain',choice:'skip',rawChoice:'skip',
+      ...(personalScopeKey?{learningTraces:[]}:{})};
     const request:Request={id:'contact',state:JSON.stringify({context:input.context,opportunity:{purpose,topic,
       basis:input.opportunity.basis??null},candidateBody}),questions:[
-      {id:'experience',type:'choice',question:'按context.clock中的当前本地时间、星期和时区，结合过去12小时互动、习惯画像、承诺及机会判断：此刻联系是否明确改善用户体验？用户明确说要睡觉或道晚安且目前仍适用时，通知可能打扰；仅凭作息、时间或未回复不能推断已睡着。沉默与依赖分数不是许可。',
-        options:{positive:'有明确、具体、适时的正面帮助',uncertain:'证据不足或利弊不明',negative:'可能打扰、施压或损害体验'}},
+      {id:'clearHelp',type:'choice',question:'所给最新用户互动是否明确支持现在发送这条具体消息会受欢迎或及时帮上忙？',
+        options:{yes:'有当前明确的欢迎或及时帮助依据',no:'没有当前明确的欢迎或及时帮助依据'}},
+      {id:'clearHarm',type:'choice',question:'所给最新用户互动是否明确表明这条消息现在会打扰、重复已答问题、违背拒绝或不合当前处境？',
+        options:{yes:'有当前明确的不适合发送依据',no:'没有当前明确的不适合发送依据'}},
       {id:'emotion',type:'choice',question:'依角色设定和当前OpenHer情绪，主动联系是否符合人物此时的情绪与立场？',
         options:{aligned:'明确符合',uncertain:'无法确认',conflicting:'明显不符'}},
       {id:'contactChoice',type:'choice',question:'硬性联系机会已许可。只有用户体验positive且人物情绪aligned才可send；否则wait或skip。不得因依赖提高频率。',
@@ -206,12 +220,16 @@ export class AgentJevClient {
       {scopeKey:personalScopeKey,taskType:'contact'}):null;
     const response=outcome?.response??await this.evaluate({requests:[request]});
     const answers=response.results[0]?.answers;
-    const experience=answers?.[0]?.value,emotion=answers?.[1]?.value,choice=answers?.[2]?.value;
-    if((experience!=='positive'&&experience!=='uncertain'&&experience!=='negative')||
+    const clearHelp=answers?.[0]?.value,clearHarm=answers?.[1]?.value;
+    const experience=clearHarm==='yes'?'negative':clearHelp==='yes'?'positive':'uncertain';
+    const emotion=answers?.[2]?.value,choice=answers?.[3]?.value;
+    if((clearHelp!=='yes'&&clearHelp!=='no')||(clearHarm!=='yes'&&clearHarm!=='no')||
       (emotion!=='aligned'&&emotion!=='uncertain'&&emotion!=='conflicting')||
       (choice!=='send'&&choice!=='wait'&&choice!=='skip'))throw new Error('agentjev_invalid_response');
-    const resolved=choice==='send'&&(experience!=='positive'||emotion!=='aligned')
-      ?experience==='negative'||emotion==='conflicting'?'skip':'wait':choice;
+    // A negative experience or conflicting emotion rules out this opportunity even when
+    // the model's third answer says "wait"; that answer must not contradict its evidence judgments.
+    const resolved=experience==='negative'||emotion==='conflicting'?'skip':
+      choice==='send'&&(experience!=='positive'||emotion!=='aligned')?'wait':choice;
     return {experience,emotion,choice:resolved,rawChoice:choice,
       ...(outcome?{learningTraces:outcome.learningTraces}:{})};
   }
@@ -224,6 +242,7 @@ export class AgentJevClient {
     if(!input||!input.context||!Array.isArray(input.quiet)||!input.quiet.length||
       typeof input.candidateBody!=='string'||!input.candidateBody.trim()||input.candidateBody.length>300)
       throw new Error('invalid_agentjev_contact_input');
+    if(input.context.sleepBoundary)return personalScopeKey?{verdict:'negative',learningTraces:[]}:'negative';
     const state=JSON.stringify(input);
     if(state.length>3000)throw new Error('contact_context_too_large');
     const request:Request={id:'quiet-exception',state,questions:[{id:'longingExperience',type:'choice',

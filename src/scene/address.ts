@@ -3,6 +3,7 @@ import type {EmotionState} from '../emotion/openher.ts';
 import {relationshipContext} from '../emotion/relationships.ts';
 import type {SceneAuthority} from './store.ts';
 import type {SceneScope,SceneEnvelope,SceneState} from './types.ts';
+import type {ContactAffect} from '../emotion/contact-affect.ts';
 
 /** Only accepted speech visible to this actor can settle a nickname or an earlier invitation. */
 export function addressConversation(messages:readonly {role:string;text:string}[],visibility:'private'|'public'='private'){
@@ -42,4 +43,21 @@ export function sceneAddressGuidance(authority:SceneAuthority,scope:SceneScope,s
   return relationshipContext(authority.relationships(scope,speakerId,state))+
     `\n[XLDB 称谓建议] 当前上下文中已列明的显式称谓、拒绝和边界偏好优先于本建议。${suggestion.instruction}`+
     (suggestion.address?`用户明确指定的称呼：${JSON.stringify(suggestion.address)}。`:'');
+}
+
+/** Collects scene-local expression inputs without reading or rendering memories. */
+export function sceneExpressionOptions(authority:SceneAuthority,scope:SceneScope,speakerId:string,envelope:SceneEnvelope,
+  state:SceneState,emotion:EmotionState,nowMs:number,waiting?:ContactAffect|null,directional=true){
+  const mode=authority.interactions.modeOf(scope);
+  const clock=mode?authority.interactions.clock(scope,nowMs):null;
+  const story=clock?.kind==='story'||!clock&&authority.worldSettings(scope)?.mode==='story';
+  const zone=clock?.timeZone??(story?'UTC':null);
+  const hideStoryTime=Boolean(story&&(authority.worldSettings(scope)?.publicTime===false||
+    clock?.kind==='story'&&!clock.known));
+  const clockTimeMs=clock?.kind==='story'?(typeof clock.timeMs==='number'?clock.timeMs:null):
+    story?authority.emotionTime(scope,state.sources,nowMs):nowMs;
+  return {actorId:speakerId,addresseeId:'player',timeZone:zone,clockKind:story?'story' as const:'realtime' as const,
+    clockTimeMs,hideStoryTime,
+    relationBasis:directional?'current_directional_projection' as const:'core_state_unspecified_target' as const,waiting,
+    address:sceneAddressGuidance(authority,scope,speakerId,envelope,state,emotion)};
 }
