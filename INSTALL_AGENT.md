@@ -1,22 +1,22 @@
-# 安装 XLDB Agent
+# 安裝 XLDB Agent
 
-当前处于 MVP 测试阶段，功能可能存在实际应用问题。
+當前處於 MVP 測試階段, 功能可能存在實際應用問題.
 
-## 1. 安装
+## 1. 安裝
 
-在解压后的根目录执行：
+在解壓後的根目錄執行:
 
 ```powershell
 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools/setup.ps1 -Mode Agent
 ```
 
-支持 Windows x64；首次安装需要网络和约 5 GB 可用空间。运行时、AgentJev 权重、依赖及缓存仅保存到工作区 `.local/`，不会安装全局 Python 或 npm 包。模型资源由随包清单固定到已验证的资源版本，安装器逐项校验 SHA-256。安装后从 `.local/install/install-receipt.json` 读取 `nodePath`，后续命令使用该路径。
+支援 Windows x64; 首次安裝需要網路和約 5 GB 可用空間. 執行時,AgentJev 權重, 依賴及快取僅儲存到工作區 `.local/`, 不會安裝全域 Python 或 npm 包. 模型資源由隨包清單固定到已驗證的資源版本, 安裝器逐項校驗 SHA-256. 安裝後從 `.local/install/install-receipt.json` 讀取 `nodePath`, 後續命令使用該路徑.
 
-## 2. 首先请用户填写检索配置
+## 2. 首先請使用者填寫檢索設定
 
-安装完成后，Agent 直接告诉用户：
+安裝完成後,Agent 直接告訴使用者:
 
-> 请在当前工作区新建 `.local/agent/retrieval-api.txt`，按下面模板填写 embedding 和 reranker 的 API 地址、密钥及模型名，保存后告诉我。密钥只填写在文件中，不用发到聊天里。
+> 請在當前工作區新建 `.local/agent/retrieval-api.txt`, 按下面模板填寫 embedding 和 reranker 的 API 地址, 金鑰及模型名, 儲存後告訴我. 金鑰只填寫在檔案中, 不用發到聊天裡.
 
 ```json
 {
@@ -25,17 +25,17 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools/se
 }
 ```
 
-TXT 使用 UTF-8，内容保留上述 JSON 格式；API 地址可填写根地址或完整 embeddings/rerank 端点。模型名使用服务提供方给出的标识。查询与允许检索的记忆文本会发往所填服务。CLI 自动读取该文件，已有配置直接复用。若用户明确暂不配置，可继续本地关键词检索。
+TXT 使用 UTF-8, 內容保留上述 JSON 格式;API 地址可填寫根地址或完整 embeddings/rerank 端點. 模型名使用服務提供方給出的標識. 查詢與允許檢索的記憶文本會發往所填服務.CLI 自動讀取該檔案, 已有設定直接複用. 若使用者明確暫不設定, 可繼續本地關鍵詞檢索.
 
-## 3. 选择入口
+## 3. 選擇入口
 
-- **伴侣**：Agent 打开角色选择弹窗，选择六份预设之一，或载入自己的角色 JSON；查看资料并确认后才开始启用。关闭或取消弹窗不会启用新角色。
-- **跑团／角色扮演**：根据用户提供的世界、人物与开场建立独立任务；导演默认开启，所有文本推理交由 Agent 自己的独立子代理执行。
+- **伴侶**:Agent 開啟角色選擇彈窗, 選擇六份預設之一, 或載入自己的角色 JSON; 檢視資料並確認後才開始啟用. 關閉或取消彈窗不會啟用新角色.
+- **跑團/角色扮演**: 根據使用者提供的世界, 人物與開場建立獨立任務; 導演預設開啟, 所有文本推理交由 Agent 自己的獨立子代理執行.
 
-随后读取 `.agents/skills/xldb-agent/SKILL.md`，执行其任务循环。角色正文经过筛选的上下文生成，用户确认接受后再提交助手候选。不要将跑团内容作为真实用户画像。
+隨後讀取 `.agents/skills/xldb-agent/SKILL.md`. 每次會話先執行 `node companion-agent/adapters/cli.mjs daemon ensure` 啟動(或沿用)常駐 daemon, 再開啟角色選擇彈窗或進入其任務迴圈; 會話結束時 `daemon stop`. 角色正文經過篩選的上下文生成, 使用者確認接受後再提交助手候選. 不要將跑團內容作為真實使用者畫像.
 
-自定义角色可交给其他 AI 工具创作。把 [详细创作说明](docs/CHARACTER_CREATION_GUIDE.md) 和 [填写模板](docs/CHARACTER_TEMPLATE.md) 交给它，完成后导出 JSON 并在弹窗载入。可导入的示例文件位于 `presets/custom-character.template.json`。支持原创角色、作品角色及用户提供的真实人物背景；先说明自己的核心需求，再由创作工具补全人生、社会关系和生日。
+自訂角色可交給其他 AI 工具創作. 把 [詳細創作說明](companion-agent/docs/CHARACTER_CREATION_GUIDE.md) 和 [填寫模板](companion-agent/docs/CHARACTER_TEMPLATE.md) 交給它, 完成後匯出 JSON 並在彈窗載入. 可匯入的示例檔案位於 `companion-agent/presets/custom-character.template.json`. 支援原創角色, 作品角色及使用者提供的真實人物背景; 先說明自己的核心需求, 再由創作工具補全人生, 社會關係和生日.
 
 ## 更新
 
-解压新版本到独立目录，按照 [恢复说明](docs/RECOVERY.md) 备份并迁移数据；不要覆盖运行中的数据库。模型校验匹配时安装器复用已有文件。密钥与 `.local/agent/` 数据不应上传到 GitHub。
+解壓新版本到獨立目錄, 按照 [恢復說明](shared/docs/RECOVERY.md) 備份並遷移資料; 不要覆蓋執行中的資料庫. 模型校驗匹配時安裝器複用已有檔案. 金鑰與 `.local/agent/` 資料不應上傳到 GitHub.

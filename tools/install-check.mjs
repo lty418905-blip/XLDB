@@ -43,7 +43,7 @@ try {
     scope:{worldId:'install-check',sessionId:'install-check',branchId:'main',characterId:'diagnostic'},
     dataDirectory
   }));
-  const cli=path.join(root,'adapters','agent','cli.mjs');
+  const cli=path.join(root,'companion-agent','adapters','cli.mjs');
   const child=spawnSync(process.execPath,[cli,'run',requestPath],{cwd:root,encoding:'utf8',windowsHide:true});
   assert.equal(child.status,0,child.stderr||child.stdout);
   const events=child.stdout.trim().split(/\r?\n/u).filter(Boolean).map(line=>JSON.parse(line));
