@@ -565,8 +565,8 @@
     },
     {
       "file": "shared/src/memory/retention.ts",
-      "sha256": "50873fc4c284737a5d678cc1e62288e7d116c9e77db605634c545422a114f99c",
-      "bytes": 30187
+      "sha256": "2eb64ff4f34e8c22d6dfe4f7ed0a1a8e212bb97c962106bb50b136124e2767ca",
+      "bytes": 30686
     },
     {
       "file": "shared/src/memory/retrieval.ts",
