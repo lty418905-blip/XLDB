@@ -745,8 +745,8 @@
     },
     {
       "file": "shared/src/scene/world-state.ts",
-      "sha256": "cc397c664efcfb89b136a400a62e49e7a82733f89f7e91bc039341542836add6",
-      "bytes": 39760
+      "sha256": "a5fe466c5419b950f1b72dc339693e532331f05521a32e6189eb5a97229ed8ff",
+      "bytes": 39603
     },
     {
       "file": "shared/third-party/agentjev/agentjev/model.py",
