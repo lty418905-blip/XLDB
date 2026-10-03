@@ -745,8 +745,8 @@
     },
     {
       "file": "shared/src/scene/world-extraction.ts",
-      "sha256": "8683cc03d8b1e2aa1f44356a60c0b006275ad439b8fb478b9f520eb4c48ab7e4",
-      "bytes": 5068
+      "sha256": "c21a0ad63b7a574fb84f81cf70b6eb3475ed5197eab26334acb9a9ae173bddb1",
+      "bytes": 43719
     },
     {
       "file": "shared/src/scene/world-state.ts",
