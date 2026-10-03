@@ -27,8 +27,8 @@ const rhythm=(chronotype:Chronotype,weekendLateRise=CHRONOTYPE_WINDOWS[chronotyp
   Object.freeze({chronotype,weekendLateRise});
 
 /**
- * The six built-in presets by presetId, proposed from each preset's own text and revised after the fable-high review (see
- * .local/review/proactive-m3-20260928/m3-5a-chronotypes.md). Xia Mingcheng runs public nature activities, so her weekend
+ * The six built-in presets by presetId, proposed from each preset's own text and revised after an independent review.
+ * Xia Mingcheng runs public nature activities, so her weekend
  * mornings are working mornings and she does not sleep in. A custom persona is standard.
  */
 export const PRESET_RHYTHMS:Readonly<Record<string,Readonly<PresetRhythm>>>=Object.freeze({

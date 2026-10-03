@@ -21,7 +21,7 @@ function dataDirectoryOf(value){
   return dataDirectory;
 }
 const print=line=>console.log(JSON.stringify(line));
-const DAEMON_USAGE='Usage: node adapters/agent/cli.mjs daemon ensure|start [--stay] [--session-idle-ms N] [--stop-grace-ms N] [--conversation-window-ms N] | stop [--force] | status  [--data-directory DIR]';
+const DAEMON_USAGE='Usage: node companion-agent/adapters/cli.mjs daemon ensure|start [--stay] [--session-idle-ms N] [--stop-grace-ms N] [--conversation-window-ms N] | stop [--force] | status  [--data-directory DIR]';
 /** Parses `--flag` and `--name value` options; every value option is a non-negative integer except paths. */
 function daemonOptions(args,allowed,usage=DAEMON_USAGE){
   const options={};
@@ -37,7 +37,7 @@ function daemonOptions(args,allowed,usage=DAEMON_USAGE){
   return options;
 }
 if(command==='onboard') {
-  if(!argument||rest.some(value=>value!=='--no-open'))throw new Error('Usage: node adapters/agent/cli.mjs onboard REQUEST_JSON [--no-open]');
+  if(!argument||rest.some(value=>value!=='--no-open'))throw new Error('Usage: node companion-agent/adapters/cli.mjs onboard REQUEST_JSON [--no-open]');
   const request=JSON.parse(fs.readFileSync(path.resolve(argument),'utf8'));
   const dataDirectory=dataDirectoryOf(request.dataDirectory);
   // Through the daemon while it is alive (each call a daemon run with origin onboard), otherwise a runtime in this
@@ -67,21 +67,21 @@ if(command==='onboard') {
     if(result.status==='failed')process.exitCode=1;
   }finally{session?.close();route.close();}
 } else if(command==='cancel') {
-  if(!argument||rest.length)throw new Error('Usage: node adapters/agent/cli.mjs cancel RUN_DIRECTORY');
+  if(!argument||rest.length)throw new Error('Usage: node companion-agent/adapters/cli.mjs cancel RUN_DIRECTORY');
   const directory=path.resolve(argument);const run=JSON.parse(fs.readFileSync(path.join(directory,'run.json'),'utf8'));
   if(run.status==='running')fs.writeFileSync(path.join(directory,'cancel.json'),JSON.stringify({requestedAt:new Date().toISOString()}));
   console.log(JSON.stringify({status:run.status==='running'?'cancel_requested':run.status}));
 } else if(command==='jobs') {
-  if(!argument||rest.length)throw new Error('Usage: node adapters/agent/cli.mjs jobs RUN_DIRECTORY');
+  if(!argument||rest.length)throw new Error('Usage: node companion-agent/adapters/cli.mjs jobs RUN_DIRECTORY');
   console.log(JSON.stringify(await listPending(path.resolve(argument))));
 } else if(command==='run') {
-  if(!argument||rest.length)throw new Error('Usage: node adapters/agent/cli.mjs run REQUEST_JSON');
+  if(!argument||rest.length)throw new Error('Usage: node companion-agent/adapters/cli.mjs run REQUEST_JSON');
   const request=JSON.parse(fs.readFileSync(path.resolve(argument),'utf8'));
   const dataDirectory=dataDirectoryOf(request.dataDirectory);
   process.exitCode=await runCommand({root,entryPath,dataDirectory,request,print,
     loadRetrieval:retrievalConfigPath=>loadRetrievalConfig(root,retrievalConfigPath)});
 } else if(command==='wait') {
-  const usage='Usage: node adapters/agent/cli.mjs wait [--timeout MS] [--cursor CURSOR] [--data-directory DIR]';
+  const usage='Usage: node companion-agent/adapters/cli.mjs wait [--timeout MS] [--cursor CURSOR] [--data-directory DIR]';
   const options=daemonOptions([argument,...rest].filter(value=>value!==undefined),['--timeout','--cursor','--data-directory'],usage);
   const timeoutMs=options.timeout??WAIT_DEFAULT_MS;
   if(timeoutMs<1000||timeoutMs>3_600_000)throw new Error(usage);
@@ -115,4 +115,4 @@ if(command==='onboard') {
     outcome=await statusCommand({root,entryPath,dataDirectory:dataDirectoryOf(options.dataDirectory),print});
   } else throw new Error(DAEMON_USAGE);
   print(outcome.output);process.exitCode=outcome.code;
-} else throw new Error('Usage: node adapters/agent/cli.mjs onboard REQUEST_JSON | run REQUEST_JSON | jobs RUN_DIRECTORY | cancel RUN_DIRECTORY | wait [--timeout MS] [--cursor CURSOR] | daemon ensure|start|stop|status');
+} else throw new Error('Usage: node companion-agent/adapters/cli.mjs onboard REQUEST_JSON | run REQUEST_JSON | jobs RUN_DIRECTORY | cancel RUN_DIRECTORY | wait [--timeout MS] [--cursor CURSOR] | daemon ensure|start|stop|status');
