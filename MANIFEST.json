@@ -455,8 +455,8 @@
     },
     {
       "file": "shared/src/core/pair-capture.ts",
-      "sha256": "2ca3468ed33d7c9ed65a0ce34e1450306c48c7edb371375ef0415969b4ec3408",
-      "bytes": 13473
+      "sha256": "91d928595af793ccb78cf429d40e4f14112f9c6ab6179cbc06b0f832461a1d78",
+      "bytes": 13696
     },
     {
       "file": "shared/src/core/role-observation.ts",
