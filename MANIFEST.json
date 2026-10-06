@@ -415,8 +415,8 @@
     },
     {
       "file": "shared/src/common/physiology.ts",
-      "sha256": "e436c0908efab954530a6c8018c72639ea4485e61f1b64ed69167104124f704e",
-      "bytes": 36426
+      "sha256": "ca1bde17f54c468a79b47b66b14f3cbcbc10f283960894bda31192c7bdf04e83",
+      "bytes": 39744
     },
     {
       "file": "shared/src/common/state-types.ts",
@@ -615,8 +615,8 @@
     },
     {
       "file": "shared/src/scene/calendar-store.ts",
-      "sha256": "cd5fa1920d5880b5e646105db8e28a5b71d9d5db013ae7a77bf222c726e82416",
-      "bytes": 15769
+      "sha256": "f4d1a333248491a4187568b64dd88fdcb870677d4306646a5822c5638abd762c",
+      "bytes": 19143
     },
     {
       "file": "shared/src/scene/calendar.ts",
@@ -705,8 +705,8 @@
     },
     {
       "file": "shared/src/scene/store.ts",
-      "sha256": "8c102d7b1bc3a652d705c8de19a60190557a60e2c0e1b111864912559806dae7",
-      "bytes": 79358
+      "sha256": "68c73777d4f4c90331a5c68a4963e87454f5386d0aa1bc4d9d2f15d31021811f",
+      "bytes": 80137
     },
     {
       "file": "shared/src/scene/story-clock-consumers.ts",
