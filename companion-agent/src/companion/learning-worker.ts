@@ -2,12 +2,14 @@ import {Worker,isMainThread,parentPort,workerData} from 'node:worker_threads';
 import {DatabaseSync} from 'node:sqlite';
 import {processLearningQueue} from './learning-executor.ts';
 import type {AgentJevClient} from './agentjev.ts';
+import {trackThread} from '../../../shared/src/process/spawner.ts';
 
 export function startLearningWorker(databasePath:string):{done:Promise<void>;cancel:()=>void} {
   if(!isMainThread)throw new Error('learning_worker_nested');
   const flag=new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
   const cancelled=new Int32Array(flag);
   const worker=new Worker(new URL(import.meta.url),{workerData:{kind:'xldb-learning',databasePath,flag}});
+  trackThread('learning',worker);
   let settled=false;
   const done=new Promise<void>((resolve,reject)=>{
     worker.once('error',error=>{settled=true;reject(error);});
