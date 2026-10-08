@@ -470,8 +470,8 @@
     },
     {
       "file": "shared/src/core/models.ts",
-      "sha256": "89ea10097051e53753499849184b3a36696718ba25f54ec405c3fe62a59dfc3d",
-      "bytes": 61534
+      "sha256": "7d433a94ca12cc08bd6bbaccc262ffe6bf59d30453a0702d659394f57bfc879a",
+      "bytes": 61465
     },
     {
       "file": "shared/src/core/pair-capture-switch.ts",
@@ -510,8 +510,8 @@
     },
     {
       "file": "shared/src/core/tool-loop.ts",
-      "sha256": "949321b6992264765d57ca2617feae14a24a8b4278e504145d092f9fe409e55b",
-      "bytes": 24144
+      "sha256": "d5212801b46c6fe07d1433383b1a92c75c28609c621991e39024d12cb4430ccc",
+      "bytes": 24847
     },
     {
       "file": "shared/src/core/types.ts",
