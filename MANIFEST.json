@@ -510,8 +510,8 @@
     },
     {
       "file": "shared/src/core/tool-loop.ts",
-      "sha256": "d5212801b46c6fe07d1433383b1a92c75c28609c621991e39024d12cb4430ccc",
-      "bytes": 24847
+      "sha256": "e3b45aff0d19321dfd769b427e0341d285a731ffd5dfb24d0f23164b4f4c5c13",
+      "bytes": 25168
     },
     {
       "file": "shared/src/core/types.ts",
