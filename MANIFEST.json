@@ -415,8 +415,8 @@
     },
     {
       "file": "shared/src/common/geography.ts",
-      "sha256": "ba3e4f972c49471b4eb1a3c03bd6e6739141b74d28ad217dfd719d5a6bb1a22c",
-      "bytes": 77407
+      "sha256": "c375658b7a51b387b0dadc9b4fe08253e608e552c5f6ec7c37903e5dcb3cab8d",
+      "bytes": 77606
     },
     {
       "file": "shared/src/common/physiology.ts",
@@ -510,8 +510,8 @@
     },
     {
       "file": "shared/src/core/tool-loop.ts",
-      "sha256": "e3b45aff0d19321dfd769b427e0341d285a731ffd5dfb24d0f23164b4f4c5c13",
-      "bytes": 25168
+      "sha256": "4d8a26439b7ce567eed728a95cf3538edabe8dc572de29c9426c33ec4dab26d0",
+      "bytes": 25395
     },
     {
       "file": "shared/src/core/types.ts",
@@ -650,8 +650,8 @@
     },
     {
       "file": "shared/src/scene/address.ts",
-      "sha256": "279245d9a84ab32d7a51bef0823e9ae84f1fa1c8a369ed054106b94e184c8988",
-      "bytes": 5030
+      "sha256": "4aae39c73a4d6d4b457ae9eed36648be3bff0a25583c9fa9d690b19d1b462853",
+      "bytes": 5035
     },
     {
       "file": "shared/src/scene/backup.ts",
@@ -675,8 +675,8 @@
     },
     {
       "file": "shared/src/scene/emotion-scheduler.ts",
-      "sha256": "4777c8a99abc054e459a1154c3c0b1ce27657a6fb2bca31eb2ecdae918bee148",
-      "bytes": 18056
+      "sha256": "0ead43650bc0e1a12107beada73db034236604a1201e5fc8096c64e0daa7e725",
+      "bytes": 18061
     },
     {
       "file": "shared/src/scene/extension.ts",
