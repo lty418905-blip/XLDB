@@ -604,6 +604,11 @@
       "bytes": 10049
     },
     {
+      "file": "shared/src/memory/recall-details.ts",
+      "sha256": "dcf91175c77f7abcf66934d2b9d0abb3e100c48f9688f785b73195dcc8702e4a",
+      "bytes": 38361
+    },
+    {
       "file": "shared/src/memory/relevance.ts",
       "sha256": "5387f9d72ac94783742c9aae5720df495aa817b2aedc68ead96367f6f71077c0",
       "bytes": 17124
@@ -809,9 +814,14 @@
       "bytes": 45797
     },
     {
+      "file": "shared/src/scene/world-ledger.ts",
+      "sha256": "c975bede2163ec49334832b038f13e5ae75c94b7c477212b68b5352795e1a5b9",
+      "bytes": 151778
+    },
+    {
       "file": "shared/src/scene/world-state.ts",
-      "sha256": "9c9cb28e22ec66eea63cff372f96cd5b145e20d9558f054c52e82e227523f6aa",
-      "bytes": 46224
+      "sha256": "af37fa2d8113e5160b4361a1ea775ff9bc14fcc30b232e7124aafa5490f67aa0",
+      "bytes": 57537
     },
     {
       "file": "shared/third-party/agentjev/agentjev/model.py",
